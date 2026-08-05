@@ -78,4 +78,19 @@ library Math {
 
         return (a * PRECISION + b - 1) / b;
     }
+
+    /**
+     * @notice Calculates ceil((a * b) / c) safely.
+     * @dev Prevents overflow from intermediate multiplication.
+     */
+    function integerMulDivCeil(uint256 a, uint256 b, uint256 c) internal pure returns (uint256) {
+        if (c == 0) revert Math__DivisionByZero();
+        if (a == 0 || b == 0) return 0;
+
+        if (a > type(uint256).max / b) revert Math__MathOverflow();
+
+        uint256 product = a * b;
+
+        return divCeil(product, c);
+    }
 }
