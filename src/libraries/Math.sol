@@ -93,4 +93,19 @@ library Math {
 
         return divCeil(product, c);
     }
+
+    /**
+     * @notice Calculates floor((a * b) / c) safely.
+     * @dev Prevents overflow from intermediate multiplication.
+     */
+    function integerMulDivFloor(uint256 a, uint256 b, uint256 c) internal pure returns (uint256) {
+        if (c == 0) revert Math__DivisionByZero();
+        if (a == 0 || b == 0) return 0;
+
+        if (a > type(uint256).max / b) revert Math__MathOverflow();
+
+        uint256 product = a * b;
+
+        return product / c;
+    }
 }

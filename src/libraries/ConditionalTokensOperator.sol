@@ -58,6 +58,51 @@ library ConditionalTokensOperator {
     }
 
     /**
+     * @dev Transfers YES and NO position tokens from the pool.
+     * @param conditionalTokens The address of the Conditional Tokens contract.
+     * @param to The recipient.
+     * @param yesAmount The amount of YES tokens to transfer.
+     * @param noAmount The amount of NO tokens to transfer.
+     */
+    function transferPositions(
+        address conditionalTokens,
+        address to,
+        uint256 yesPositionId,
+        uint256 noPositionId,
+        uint256 yesAmount,
+        uint256 noAmount
+    ) internal {
+        IERC1155(conditionalTokens)
+            .safeBatchTransferFrom(
+                address(this), to, positionIds(yesPositionId, noPositionId), amounts(yesAmount, noAmount), ""
+            );
+    }
+
+    /**
+     * @dev Creates the position ID array for batch operations.
+     * @param yesPositionId The ID of the yes position.
+     * @param noPositionId The ID of the no position.
+     * @return ids The array of position IDs.
+     */
+    function positionIds(uint256 yesPositionId, uint256 noPositionId) private pure returns (uint256[] memory ids) {
+        ids = new uint256[](2);
+        ids[0] = yesPositionId;
+        ids[1] = noPositionId;
+    }
+
+    /**
+     * @dev Creates the amount array for batch operations.
+     * @param yesAmount The amount of YES tokens.
+     * @param noAmount The amount of NO tokens.
+     * @return values The array of amounts.
+     */
+    function amounts(uint256 yesAmount, uint256 noAmount) private pure returns (uint256[] memory values) {
+        values = new uint256[](2);
+        values[0] = yesAmount;
+        values[1] = noAmount;
+    }
+
+    /**
      * @notice Returns the partition for splitting and merging positions.
      * @return partitionArray The partition array.
      */
