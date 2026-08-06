@@ -58,6 +58,39 @@ library ConditionalTokensOperator {
     }
 
     /**
+     * @notice Redeems winning conditional tokens after resolution.
+     */
+    function redeemPositions(address conditionalTokens, address collateralToken, bytes32 conditionId) internal {
+        IConditionalTokens(conditionalTokens)
+            .redeemPositions(IERC20(collateralToken), COLLECTION_ID, conditionId, partition());
+    }
+
+    /**
+     * @notice Reports the winning outcome to the Conditional Tokens contract.
+     * @param conditionalTokens The Conditional Tokens contract.
+     * @param conditionId The condition identifier.
+     * @param yesWins True if the YES outcome wins, false if NO wins.
+     */
+    function reportPayouts(address conditionalTokens, bytes32 conditionId, bool yesWins) internal {
+        uint256[] memory payouts = new uint256[](2);
+
+        if (yesWins) {
+            payouts[0] = 1;
+        } else {
+            payouts[1] = 1;
+        }
+
+        IConditionalTokens(conditionalTokens).reportPayouts(conditionId, payouts);
+    }
+
+    /**
+     * @notice Returns the balance of a position token.
+     */
+    function balanceOf(address conditionalTokens, address account, uint256 positionId) internal view returns (uint256) {
+        return IERC1155(conditionalTokens).balanceOf(account, positionId);
+    }
+
+    /**
      * @dev Transfers a position token from one address to another.
      * @param conditionalToken The address of the Conditional Tokens contract.
      * @param from The sender.

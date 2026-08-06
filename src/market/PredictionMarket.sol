@@ -9,6 +9,8 @@ import {Math} from "./../libraries/Math.sol";
 import {ILPToken} from "./../interfaces/ILPToken.sol";
 import {DataTypes} from "./../types/DataTypes.sol";
 import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 
 /**
  * @title PredictionMarket
@@ -24,7 +26,7 @@ import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeE
  *         is split into YES/NO positions based on current pool proportions if the market is already open.
  * @dev Liquidity providers receive LP shares representing their share of the pool.
  */
-contract PredictionMarket is FeeLogic, ERC1155TokenReceiver {
+contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessControl {
     error PredictionMarket__NeedMoreThanZero();
     error PredictionMarket__InsufficientLiquidity();
     error PredictionMarket__IsNotPending();
@@ -36,6 +38,11 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver {
     error PredictionMarket__LiquidityTargetReached();
     error PredictionMarket__MinimumOutputNotMet();
     error PredictionMarket__MaximumInputExceeded();
+    error PredictionMarket__TradingWindowIsOver();
+    error PredictionMarket__MarketCanNotResolve();
+    error PredictionMarket__IsNotResolved();
+    error PredictionMarket__NothingToRedeem();
+    error PredictionMarket__IsOpenOrResolvingOrResolved();
 
     using ConditionalTokensOperator for address;
     using Pricing for uint256;
@@ -53,6 +60,9 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver {
 
     /// @dev Current market state.
     MarketState state = MarketState.PENDING;
+
+    /// @dev Position ID of the winning outcome after market resolution.
+    uint256 winningTokenId;
 
     /// @dev Oracle responsible for resolving the market.
     address internal immutable oracle;
@@ -87,6 +97,9 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver {
     /// @dev Minimum liquidity required to open the market.
     uint256 internal immutable initialLiquidityTarget;
 
+    /// @dev Role identifier to resolve the market.
+    bytes32 internal constant RESOLUTION_ROLE = keccak256("MINT_AND_BURN_ROLE");
+
     /// @notice Emitted when a user buys outcome tokens.
     event Bought(
         address indexed buyer, uint256 indexed tokenId, uint256 collateralAmount, uint256 fee, uint256 amountBrought
@@ -109,11 +122,14 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver {
     /// @notice Emitted whenever the market state changes.
     event MarketStateChanged(MarketState marketState);
 
+    /// @notice Emitted when user redeem position after resolution.
+    event PositionRedeemed(address winner, uint256 winningAmount);
+
     /**
      * @notice Creates a new prediction market.
      * @param params Market initialization parameters.
      */
-    constructor(DataTypes.MarketInitParams memory params) {
+    constructor(DataTypes.MarketInitParams memory params) Ownable(msg.sender) {
         conditionalToken = params.conditionalToken;
         collateral = params.collateral;
         lpToken = params.lpToken;
@@ -128,8 +144,11 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver {
         resolveTime = params.resolveTime;
         liquidityDeadline = params.liquidityDeadline;
         initialLiquidityTarget = params.initialLiquidityTarget;
+
+        _grantRole(RESOLUTION_ROLE, params.oracle);
     }
 
+    /// @dev Restricts execution to amounts greater than zero.
     modifier moreThanZero(uint256 amount) {
         if (amount <= 0) revert PredictionMarket__NeedMoreThanZero();
         _;
@@ -144,6 +163,8 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver {
     /// @dev Restricts execution to the open state.
     modifier onlyOpen() {
         if (state != MarketState.OPEN) revert PredictionMarket__IsNotOpen();
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp >= resolveTime) revert PredictionMarket__TradingWindowIsOver();
         _;
     }
 
@@ -151,6 +172,30 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver {
     modifier onlyCancelled() {
         if (state != MarketState.CANCELLED) revert PredictionMarket__IsNotCancelled();
         _;
+    }
+
+    /// @dev Restricts execution to resolved markets.
+    modifier onlyResolved() {
+        if (state != MarketState.RESOLVED) revert PredictionMarket__IsNotResolved();
+        _;
+    }
+
+    /// @dev Restricts execution to the open or resolving or resolved state.
+    modifier onlyOpenOrResolvingOrResolved() {
+        if (state == MarketState.PENDING || state == MarketState.CANCELLED) {
+            revert PredictionMarket__IsOpenOrResolvingOrResolved();
+        }
+        _;
+    }
+
+    /**
+     * @notice Updates the protocol fee rate.
+     * @param newRate The new fee rate.
+     * @dev Only callable by the contract owner.
+     * @dev The fee rate is expressed in 18-decimal precision.
+     */
+    function updateFeeRate(uint256 newRate) external onlyOwner {
+        updateFee(newRate);
     }
 
     /**
@@ -190,6 +235,26 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver {
     }
 
     /**
+     * @notice Redeems winning outcome tokens for collateral after market resolution.
+     * @dev Redeems any winning YES or NO positions held by the caller. The Conditional
+     *      Tokens contract burns the redeemed positions and transfers the corresponding
+     *      collateral to this contract, which then forwards it to the caller.
+     */
+    function redeem() external onlyResolved {
+        uint256 amount = conditionalToken.balanceOf(msg.sender, winningTokenId);
+        if (amount == 0) revert PredictionMarket__NothingToRedeem();
+
+        conditionalToken.transferPositionFrom(msg.sender, address(this), winningTokenId, amount);
+
+        uint256 balanceBefore = IERC20(collateral).balanceOf(address(this));
+        conditionalToken.redeemPositions(collateral, conditionId);
+        uint256 winningAmount = IERC20(collateral).balanceOf(address(this)) - balanceBefore;
+
+        IERC20(collateral).safeTransfer(msg.sender, winningAmount);
+        emit PositionRedeemed(msg.sender, winningAmount);
+    }
+
+    /**
      * @notice Adds initial liquidity during market creation. Opens the market once the liquidity target is
      * reached before deadline. If the target is not reached, the market can be cancelled and liquidity refunded.
      * @param collateralAmount Amount of collateral to deposit.
@@ -222,7 +287,7 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver {
      * @notice Removes liquidity by burning LP shares.
      * @param sharesToBurn Amount of LP tokens to burn.
      */
-    function removeLiquidity(uint256 sharesToBurn) external moreThanZero(sharesToBurn) onlyOpen {
+    function removeLiquidity(uint256 sharesToBurn) external moreThanZero(sharesToBurn) onlyOpenOrResolvingOrResolved {
         uint256 supply = IERC20(lpToken).totalSupply();
         if (sharesToBurn > supply) revert PredictionMarket__InsufficientLiquidity();
 
@@ -274,6 +339,31 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver {
 
         state = MarketState.CANCELLED;
         emit MarketStateChanged(MarketState.CANCELLED);
+    }
+
+    /**
+     * @notice Sets the market state to resolving if the market is open
+     * and the resolution time has passed.
+     */
+    function setMarketResolving() external {
+        _canMarketResolve();
+
+        state = MarketState.RESOLVING;
+        emit MarketStateChanged(MarketState.RESOLVING);
+    }
+
+    /**
+     * @notice Resolves the market by reporting payouts to the Conditional Tokens contract.
+     * @param yesWins True if the YES outcome wins, false if NO wins.
+     * @dev Only callable by the oracle with the RESOLUTION_ROLE.
+     */
+    function resolveMarket(bool yesWins) external onlyRole(RESOLUTION_ROLE) {
+        _canMarketResolve();
+
+        conditionalToken.reportPayouts(conditionId, yesWins);
+        winningTokenId = yesWins ? yesTokenId : noTokenId;
+        state = MarketState.RESOLVED;
+        emit MarketStateChanged(MarketState.RESOLVED);
     }
 
     /**
@@ -373,5 +463,16 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver {
             conditionalToken.transferPositions(msg.sender, yesTokenId, noTokenId, yesReturn, noReturn);
         }
         emit LiquidityAdded(msg.sender, collateralAmount, shares);
+    }
+
+    /**
+     * @dev Internal helper to check if the market can be resolved if the
+     * market is open and the resolution time has passed.
+     */
+    function _canMarketResolve() internal view {
+        // forge-lint: disable-next-line(block-timestamp)
+        if (state != MarketState.OPEN || block.timestamp < resolveTime) {
+            revert PredictionMarket__MarketCanNotResolve();
+        }
     }
 }
