@@ -43,4 +43,14 @@ abstract contract FeeLogic {
     function calculateFee(uint256 amount) internal view returns (uint256) {
         return amount.mul(feeRate);
     }
+
+    /**
+     * @notice Calculates the fee required for a desired net output amount.
+     * @dev Returns the fee that must be added so the recipient receives amount exactly after fees.
+     * @param amount Desired net output amount.
+     * @return The fee amount.
+     */
+    function calculateFeeFromNet(uint256 amount) internal view returns (uint256) {
+        return amount.integerMulDivCeil(feeRate, Math.PRECISION - feeRate);
+    }
 }

@@ -3,6 +3,7 @@ pragma solidity 0.8.35;
 
 import {FeeLogic} from "./../base/FeeLogic.sol";
 import {ERC1155TokenReceiver} from "./../base/ERC1155Receiver.sol";
+import {Pricing} from "./../libraries/Pricing.sol";
 import {ConditionalTokensOperator} from "./../libraries/ConditionalTokensOperator.sol";
 import {Math} from "./../libraries/Math.sol";
 import {ILPToken} from "./../interfaces/ILPToken.sol";
@@ -33,8 +34,11 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver {
     error PredictionMarket__IsNotCancelled();
     error PredictionMarket__NoLiquidity();
     error PredictionMarket__LiquidityTargetReached();
+    error PredictionMarket__MinimumOutputNotMet();
+    error PredictionMarket__MaximumInputExceeded();
 
     using ConditionalTokensOperator for address;
+    using Pricing for uint256;
     using Math for uint256;
     using SafeERC20 for IERC20;
 
@@ -83,6 +87,16 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver {
     /// @dev Minimum liquidity required to open the market.
     uint256 internal immutable initialLiquidityTarget;
 
+    /// @notice Emitted when a user buys outcome tokens.
+    event Bought(
+        address indexed buyer, uint256 indexed tokenId, uint256 collateralAmount, uint256 fee, uint256 amountBrought
+    );
+
+    /// @notice Emitted when a user sells outcome tokens.
+    event Sold(
+        address indexed buyer, uint256 indexed tokenId, uint256 collateralAmount, uint256 fee, uint256 amountSold
+    );
+
     /// @notice Emitted when liquidity is added.
     event LiquidityAdded(address indexed provider, uint256 collateralAmount, uint256 lpTokensMinted);
 
@@ -116,6 +130,11 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver {
         initialLiquidityTarget = params.initialLiquidityTarget;
     }
 
+    modifier moreThanZero(uint256 amount) {
+        if (amount <= 0) revert PredictionMarket__NeedMoreThanZero();
+        _;
+    }
+
     /// @dev Restricts execution to the pending state.
     modifier onlyPending() {
         if (state != MarketState.PENDING) revert PredictionMarket__IsNotPending();
@@ -132,6 +151,42 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver {
     modifier onlyCancelled() {
         if (state != MarketState.CANCELLED) revert PredictionMarket__IsNotCancelled();
         _;
+    }
+
+    /**
+     * @notice Buys YES outcome tokens.
+     * @param collateralAmount Amount of collateral to spend.
+     * @param minOutcomeTokens Minimum number of outcome tokens to receive.
+     */
+    function buyYes(uint256 collateralAmount, uint256 minOutcomeTokens) external onlyOpen {
+        _buy(collateralAmount, minOutcomeTokens, true);
+    }
+
+    /**
+     * @notice Buys NO outcome tokens.
+     * @param collateralAmount Amount of collateral to spend.
+     * @param minOutcomeTokens Minimum number of outcome tokens to receive.
+     */
+    function buyNo(uint256 collateralAmount, uint256 minOutcomeTokens) external onlyOpen {
+        _buy(collateralAmount, minOutcomeTokens, false);
+    }
+
+    /**
+     * @notice Sells YES outcome tokens.
+     * @param collateralAmount Amount of collateral to receive.
+     * @param maxOutcomeTokens Maximum number of outcome tokens to sell.
+     */
+    function sellYes(uint256 collateralAmount, uint256 maxOutcomeTokens) external onlyOpen {
+        _sell(collateralAmount, maxOutcomeTokens, true);
+    }
+
+    /**
+     * @notice Sells NO outcome tokens.
+     * @param collateralAmount Amount of collateral to receive.
+     * @param maxOutcomeTokens Maximum number of outcome tokens to sell.
+     */
+    function sellNo(uint256 collateralAmount, uint256 maxOutcomeTokens) external onlyOpen {
+        _sell(collateralAmount, maxOutcomeTokens, false);
     }
 
     /**
@@ -167,9 +222,7 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver {
      * @notice Removes liquidity by burning LP shares.
      * @param sharesToBurn Amount of LP tokens to burn.
      */
-    function removeLiquidity(uint256 sharesToBurn) external onlyOpen {
-        if (sharesToBurn == 0) revert PredictionMarket__NeedMoreThanZero();
-
+    function removeLiquidity(uint256 sharesToBurn) external moreThanZero(sharesToBurn) onlyOpen {
         uint256 supply = IERC20(lpToken).totalSupply();
         if (sharesToBurn > supply) revert PredictionMarket__InsufficientLiquidity();
 
@@ -224,13 +277,70 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver {
     }
 
     /**
+     * @notice Internal helper to buy YES or NO outcome tokens.
+     * @param collateralAmount Amount of collateral to spend.
+     * @param minOutcomeTokens Minimum acceptable outcome tokens.
+     * @param isYes True to buy YES, false to buy NO.
+     */
+    function _buy(uint256 collateralAmount, uint256 minOutcomeTokens, bool isYes)
+        internal
+        moreThanZero(collateralAmount)
+    {
+        (uint256 yesReserve, uint256 noReserve) = conditionalToken.getPoolBalances(yesTokenId, noTokenId);
+        uint256 fee = calculateFee(collateralAmount);
+        uint256 collateralIn = collateralAmount - fee;
+
+        uint256 amountOut;
+        if (isYes) {
+            amountOut = yesReserve.buyAmount(noReserve, collateralIn);
+        } else {
+            amountOut = noReserve.buyAmount(yesReserve, collateralIn);
+        }
+
+        if (amountOut < minOutcomeTokens) revert PredictionMarket__MinimumOutputNotMet();
+
+        IERC20(collateral).safeTransferFrom(msg.sender, address(this), collateralAmount);
+        IERC20(collateral).forceApprove(conditionalToken, collateralIn);
+        conditionalToken.splitPosition(collateral, conditionId, collateralIn);
+        conditionalToken.transferPositionFrom(address(this), msg.sender, isYes ? yesTokenId : noTokenId, amountOut);
+        emit Bought(msg.sender, isYes ? yesTokenId : noTokenId, collateralAmount, fee, amountOut);
+    }
+
+    /**
+     * @notice Internal helper to sells YES or NO outcome tokens.
+     * @param collateralAmount Desired collateral to receive.
+     * @param maxOutcomeTokens Maximum outcome tokens willing to spend.
+     * @param isYes True to sell YES, false to sell NO.
+     */
+    function _sell(uint256 collateralAmount, uint256 maxOutcomeTokens, bool isYes)
+        internal
+        moreThanZero(collateralAmount)
+    {
+        (uint256 yesReserve, uint256 noReserve) = conditionalToken.getPoolBalances(yesTokenId, noTokenId);
+        uint256 fee = calculateFeeFromNet(collateralAmount);
+        uint256 collateralOutPlusFee = collateralAmount + fee;
+
+        uint256 amountIn;
+        if (isYes) {
+            amountIn = yesReserve.sellAmount(noReserve, collateralOutPlusFee);
+        } else {
+            amountIn = noReserve.sellAmount(yesReserve, collateralOutPlusFee);
+        }
+
+        if (amountIn > maxOutcomeTokens) revert PredictionMarket__MaximumInputExceeded();
+
+        conditionalToken.transferPositionFrom(msg.sender, address(this), isYes ? yesTokenId : noTokenId, amountIn);
+        conditionalToken.mergePosition(collateral, conditionId, collateralOutPlusFee);
+        IERC20(collateral).safeTransfer(msg.sender, collateralAmount);
+        emit Sold(msg.sender, isYes ? yesTokenId : noTokenId, collateralAmount, fee, amountIn);
+    }
+
+    /**
      * @dev Adds liquidity and mints LP shares based on current reserve ratio.
      *      Excess conditional tokens are returned to maintain pool proportions.
      * @param collateralAmount Amount of collateral deposited.
      */
-    function _addLiquidity(uint256 collateralAmount) internal {
-        if (collateralAmount == 0) revert PredictionMarket__NeedMoreThanZero();
-
+    function _addLiquidity(uint256 collateralAmount) internal moreThanZero(collateralAmount) {
         uint256 supply = IERC20(lpToken).totalSupply();
 
         uint256 shares;

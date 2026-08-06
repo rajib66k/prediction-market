@@ -58,9 +58,25 @@ library ConditionalTokensOperator {
     }
 
     /**
+     * @dev Transfers a position token from one address to another.
+     * @param conditionalToken The address of the Conditional Tokens contract.
+     * @param from The sender.
+     * @param to The recipient.
+     * @param tokenId The ID of the token to transfer.
+     * @param amount The amount to transfer.
+     */
+    function transferPositionFrom(address conditionalToken, address from, address to, uint256 tokenId, uint256 amount)
+        internal
+    {
+        IERC1155(conditionalToken).safeTransferFrom(from, to, tokenId, amount, "");
+    }
+
+    /**
      * @dev Transfers YES and NO position tokens from the pool.
      * @param conditionalTokens The address of the Conditional Tokens contract.
      * @param to The recipient.
+     * @param yesPositionId The ID of the YES position.
+     * @param noPositionId The ID of the NO position.
      * @param yesAmount The amount of YES tokens to transfer.
      * @param noAmount The amount of NO tokens to transfer.
      */
