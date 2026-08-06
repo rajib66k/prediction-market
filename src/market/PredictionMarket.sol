@@ -178,9 +178,7 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver {
         uint256 noAmount = sharesToBurn.integerMulDivFloor(noReserve, supply);
 
         ILPToken(lpToken).burn(msg.sender, sharesToBurn);
-        ConditionalTokensOperator.transferPositions(
-            conditionalToken, msg.sender, yesTokenId, noTokenId, yesAmount, noAmount
-        );
+        conditionalToken.transferPositions(msg.sender, yesTokenId, noTokenId, yesAmount, noAmount);
         emit LiquidityRemoved(msg.sender, sharesToBurn, yesAmount, noAmount);
     }
 
@@ -203,7 +201,7 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver {
         uint256 mergeAmount = yesAmount < noAmount ? yesAmount : noAmount;
 
         if (mergeAmount > 0) {
-            ConditionalTokensOperator.mergePosition(conditionalToken, collateral, conditionId, mergeAmount);
+            conditionalToken.mergePosition(collateral, conditionId, mergeAmount);
         }
         IERC20(collateral).safeTransfer(msg.sender, mergeAmount);
         emit LiquidityRefunded(msg.sender, sharesToBurn, mergeAmount);
@@ -262,9 +260,7 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver {
             uint256 yesReturn = collateralAmount - yesKeep;
             uint256 noReturn = collateralAmount - noKeep;
 
-            ConditionalTokensOperator.transferPositions(
-                conditionalToken, msg.sender, yesTokenId, noTokenId, yesReturn, noReturn
-            );
+            conditionalToken.transferPositions(msg.sender, yesTokenId, noTokenId, yesReturn, noReturn);
         }
         emit LiquidityAdded(msg.sender, collateralAmount, shares);
     }
