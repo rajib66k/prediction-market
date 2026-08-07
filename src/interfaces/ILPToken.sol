@@ -7,4 +7,6 @@ interface ILPToken is IERC20 {
     function mint(address user, uint256 amount) external;
 
     function burn(address user, uint256 amount) external;
+
+    function transferOnBehalf(address from, address to, uint256 amount) external returns (bool);
 }

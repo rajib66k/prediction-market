@@ -43,6 +43,8 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
     error PredictionMarket__IsNotResolved();
     error PredictionMarket__NothingToRedeem();
     error PredictionMarket__IsOpenOrResolvingOrResolved();
+    error PredictionMarket__OnlyLpToken();
+    error PredictionMarket____TransferFailed();
 
     using ConditionalTokensOperator for address;
     using Pricing for uint256;
@@ -295,9 +297,32 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
         uint256 yesAmount = sharesToBurn.integerMulDivFloor(yesReserve, supply);
         uint256 noAmount = sharesToBurn.integerMulDivFloor(noReserve, supply);
 
+        updatePendingFee(msg.sender, lpToken);
         ILPToken(lpToken).burn(msg.sender, sharesToBurn);
+        updateUser(msg.sender, IERC20(lpToken).balanceOf(msg.sender));
+
         conditionalToken.transferPositions(msg.sender, yesTokenId, noTokenId, yesAmount, noAmount);
         emit LiquidityRemoved(msg.sender, sharesToBurn, yesAmount, noAmount);
+    }
+
+    /**
+     * @notice Claims accumulated trading fees.
+     */
+    function claimFees() external {
+        claimFeesUser(lpToken, collateral);
+    }
+
+    /**
+     * @notice Transfers lp tokens from the caller to another user.
+     * @param to The address of the user receiving the tokens.
+     * @param amount The amount of tokens to transfer.
+     */
+    function transferLiquidityToken(address to, uint256 amount) external moreThanZero(amount) {
+        updatePendingFee(msg.sender, lpToken);
+        updatePendingFee(to, lpToken);
+
+        bool success = ILPToken(lpToken).transferOnBehalf(msg.sender, to, amount);
+        if (!success) revert PredictionMarket____TransferFailed();
     }
 
     /**
@@ -379,6 +404,10 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
         (uint256 yesReserve, uint256 noReserve) = conditionalToken.getPoolBalances(yesTokenId, noTokenId);
         uint256 fee = calculateFee(collateralAmount);
         uint256 collateralIn = collateralAmount - fee;
+        uint256 supply = IERC20(lpToken).totalSupply();
+        if (supply == 0) revert PredictionMarket__NoLiquidity();
+
+        addFee(fee, supply);
 
         uint256 amountOut;
         if (isYes) {
@@ -409,6 +438,10 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
         (uint256 yesReserve, uint256 noReserve) = conditionalToken.getPoolBalances(yesTokenId, noTokenId);
         uint256 fee = calculateFeeFromNet(collateralAmount);
         uint256 collateralOutPlusFee = collateralAmount + fee;
+        uint256 supply = IERC20(lpToken).totalSupply();
+        if (supply == 0) revert PredictionMarket__NoLiquidity();
+
+        addFee(fee, supply);
 
         uint256 amountIn;
         if (isYes) {
@@ -450,7 +483,10 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
         IERC20(collateral).safeTransferFrom(msg.sender, address(this), collateralAmount);
         IERC20(collateral).forceApprove(conditionalToken, collateralAmount);
         conditionalToken.splitPosition(collateral, conditionId, collateralAmount);
+
+        updatePendingFee(msg.sender, lpToken);
         ILPToken(lpToken).mint(msg.sender, shares);
+        updateUser(msg.sender, IERC20(lpToken).balanceOf(msg.sender));
 
         if (supply > 0) {
             uint256 poolWeight = yesReserve > noReserve ? yesReserve : noReserve;
