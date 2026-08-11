@@ -354,6 +354,9 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
 
         bool success = ILPToken(lpToken).transferOnBehalf(msg.sender, to, amount);
         if (!success) revert PredictionMarket__TransferFailed();
+
+        updateUser(msg.sender, IERC20(lpToken).balanceOf(msg.sender));
+        updateUser(to, IERC20(lpToken).balanceOf(to));
     }
 
     /**
@@ -405,7 +408,7 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
     function resolveMarket(bool yesWins) external onlyRole(RESOLUTION_ROLE) {
         _canMarketResolve();
 
-        conditionalToken.reportPayouts(conditionId, yesWins);
+        conditionalToken.reportPayouts(questionId, yesWins);
         winningTokenId = yesWins ? yesTokenId : noTokenId;
         state = MarketState.RESOLVED;
         emit MarketStateChanged(MarketState.RESOLVED);

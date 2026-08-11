@@ -68,10 +68,10 @@ library ConditionalTokensOperator {
     /**
      * @notice Reports the winning outcome to the Conditional Tokens contract.
      * @param conditionalTokens The Conditional Tokens contract.
-     * @param conditionId The condition identifier.
+     * @param questionId The question identifier.
      * @param yesWins True if the YES outcome wins, false if NO wins.
      */
-    function reportPayouts(address conditionalTokens, bytes32 conditionId, bool yesWins) internal {
+    function reportPayouts(address conditionalTokens, bytes32 questionId, bool yesWins) internal {
         uint256[] memory payouts = new uint256[](2);
 
         if (yesWins) {
@@ -80,7 +80,7 @@ library ConditionalTokensOperator {
             payouts[1] = 1;
         }
 
-        IConditionalTokens(conditionalTokens).reportPayouts(conditionId, payouts);
+        IConditionalTokens(conditionalTokens).reportPayouts(questionId, payouts);
     }
 
     /**
