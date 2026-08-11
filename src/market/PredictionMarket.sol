@@ -7,6 +7,7 @@ import {Pricing} from "./../libraries/Pricing.sol";
 import {ConditionalTokensOperator} from "./../libraries/ConditionalTokensOperator.sol";
 import {Math} from "./../libraries/Math.sol";
 import {ILPToken} from "./../interfaces/ILPToken.sol";
+import {IConditionalTokens} from "./../interfaces/IConditionalTokens.sol";
 import {DataTypes} from "./../types/DataTypes.sol";
 import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
@@ -42,9 +43,13 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
     error PredictionMarket__MarketCanNotResolve();
     error PredictionMarket__IsNotResolved();
     error PredictionMarket__NothingToRedeem();
-    error PredictionMarket__IsOpenOrResolvingOrResolved();
+    error PredictionMarket__IsOpenOrResolved();
     error PredictionMarket__OnlyLpToken();
-    error PredictionMarket____TransferFailed();
+    error PredictionMarket__TransferFailed();
+    error PredictionMarket__InvalidAddress();
+    error PredictionMarket__IntialLiquidityMustBeMoreThanZero();
+    error PredictionMarket__LiquidityDeadlineMustBeMoreThanCurrTimestamp();
+    error PredictionMarket__ResolveTimeMustBeMoreThanLiquidityDeadline();
 
     using ConditionalTokensOperator for address;
     using Pricing for uint256;
@@ -55,7 +60,6 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
     enum MarketState {
         PENDING,
         OPEN,
-        RESOLVING,
         RESOLVED,
         CANCELLED
     }
@@ -100,7 +104,7 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
     uint256 internal immutable initialLiquidityTarget;
 
     /// @dev Role identifier to resolve the market.
-    bytes32 internal constant RESOLUTION_ROLE = keccak256("MINT_AND_BURN_ROLE");
+    bytes32 internal constant RESOLUTION_ROLE = keccak256("RESOLUTION_ROLE");
 
     /// @notice Emitted when a user buys outcome tokens.
     event Bought(
@@ -132,20 +136,47 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
      * @param params Market initialization parameters.
      */
     constructor(DataTypes.MarketInitParams memory params) Ownable(msg.sender) {
+        if (params.initialLiquidityTarget == 0) revert PredictionMarket__IntialLiquidityMustBeMoreThanZero();
+
+        // forge-lint: disable-next-line(block-timestamp)
+        if (params.liquidityDeadline > block.timestamp) {
+            revert PredictionMarket__LiquidityDeadlineMustBeMoreThanCurrTimestamp();
+        }
+
+        if (params.resolveTime > params.liquidityDeadline) {
+            revert PredictionMarket__ResolveTimeMustBeMoreThanLiquidityDeadline();
+        }
+
+        if (
+            params.conditionalToken == address(0) || params.collateral == address(0) || params.lpToken == address(0)
+                || params.oracle == address(0)
+        ) {
+            revert PredictionMarket__InvalidAddress();
+        }
+
         conditionalToken = params.conditionalToken;
         collateral = params.collateral;
         lpToken = params.lpToken;
         oracle = params.oracle;
 
-        conditionId = params.conditionId;
         questionId = params.questionId;
-
-        yesTokenId = params.yesTokenId;
-        noTokenId = params.noTokenId;
 
         resolveTime = params.resolveTime;
         liquidityDeadline = params.liquidityDeadline;
         initialLiquidityTarget = params.initialLiquidityTarget;
+
+        IConditionalTokens(conditionalToken).prepareCondition(address(this), questionId, 2);
+        conditionId = IConditionalTokens(conditionalToken).getConditionId(address(this), questionId, 2);
+
+        yesTokenId = IConditionalTokens(conditionalToken)
+            .getPositionId(
+                IERC20(collateral), IConditionalTokens(conditionalToken).getCollectionId(bytes32(0), conditionId, 1)
+            );
+
+        noTokenId = IConditionalTokens(conditionalToken)
+            .getPositionId(
+                IERC20(collateral), IConditionalTokens(conditionalToken).getCollectionId(bytes32(0), conditionId, 2)
+            );
 
         _grantRole(RESOLUTION_ROLE, params.oracle);
     }
@@ -182,10 +213,10 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
         _;
     }
 
-    /// @dev Restricts execution to the open or resolving or resolved state.
-    modifier onlyOpenOrResolvingOrResolved() {
+    /// @dev Restricts execution to the open or resolved state.
+    modifier onlyOpenOrResolved() {
         if (state == MarketState.PENDING || state == MarketState.CANCELLED) {
-            revert PredictionMarket__IsOpenOrResolvingOrResolved();
+            revert PredictionMarket__IsOpenOrResolved();
         }
         _;
     }
@@ -289,7 +320,7 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
      * @notice Removes liquidity by burning LP shares.
      * @param sharesToBurn Amount of LP tokens to burn.
      */
-    function removeLiquidity(uint256 sharesToBurn) external moreThanZero(sharesToBurn) onlyOpenOrResolvingOrResolved {
+    function removeLiquidity(uint256 sharesToBurn) external moreThanZero(sharesToBurn) onlyOpenOrResolved {
         uint256 supply = IERC20(lpToken).totalSupply();
         if (sharesToBurn > supply) revert PredictionMarket__InsufficientLiquidity();
 
@@ -322,7 +353,7 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
         updatePendingFee(to, lpToken);
 
         bool success = ILPToken(lpToken).transferOnBehalf(msg.sender, to, amount);
-        if (!success) revert PredictionMarket____TransferFailed();
+        if (!success) revert PredictionMarket__TransferFailed();
     }
 
     /**
@@ -364,17 +395,6 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
 
         state = MarketState.CANCELLED;
         emit MarketStateChanged(MarketState.CANCELLED);
-    }
-
-    /**
-     * @notice Sets the market state to resolving if the market is open
-     * and the resolution time has passed.
-     */
-    function setMarketResolving() external {
-        _canMarketResolve();
-
-        state = MarketState.RESOLVING;
-        emit MarketStateChanged(MarketState.RESOLVING);
     }
 
     /**

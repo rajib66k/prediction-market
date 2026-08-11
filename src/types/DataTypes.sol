@@ -13,11 +13,7 @@ library DataTypes {
         address conditionalToken;
         address lpToken;
 
-        bytes32 conditionId;
         bytes32 questionId;
-
-        uint256 yesTokenId;
-        uint256 noTokenId;
 
         uint256 resolveTime;
         uint256 liquidityDeadline;
