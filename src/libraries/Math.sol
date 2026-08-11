@@ -91,7 +91,7 @@ library Math {
 
         uint256 product = a * b;
 
-        return divCeil(product, c);
+        return (product + c - 1) / c;
     }
 
     /**

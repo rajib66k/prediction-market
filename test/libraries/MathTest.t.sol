@@ -128,4 +128,69 @@ contract MathTest is Test {
 
         assertEq(Math.divCeil(a, b), (a * Math.PRECISION + b - 1) / b);
     }
+
+    function testIntegerMulDivCeilRevertIfDenominatorIsZero() public {
+        vm.expectRevert(Math.Math__DivisionByZero.selector);
+        Math.integerMulDivCeil(1e18, 1e18, 0);
+    }
+
+    function testIntegerMulDivCeilReturnsZero() public pure {
+        assertEq(Math.integerMulDivCeil(0, 1e18, 1e18), 0);
+        assertEq(Math.integerMulDivCeil(1e18, 0, 1e18), 0);
+        assertEq(Math.integerMulDivCeil(0, 0, 1e18), 0);
+    }
+
+    function testIntegerMulDivCeilRevertIfMultiplicationOverflows() public {
+        uint256 a = type(uint256).max;
+        uint256 b = 2;
+
+        vm.expectRevert(Math.Math__MathOverflow.selector);
+        Math.integerMulDivCeil(a, b, 1e18);
+    }
+
+    function testIntegerMulDivCeilRevertIfRoundingOverflows() public {
+        uint256 a = type(uint256).max;
+        uint256 b = 1;
+        uint256 c = 2;
+
+        vm.expectRevert();
+        Math.integerMulDivCeil(a, b, c);
+    }
+
+    function testIntegerMulDivCeil(uint256 a, uint256 b, uint256 c) public pure {
+        b = bound(b, 1e8, type(uint96).max);
+        c = bound(c, 1e8, type(uint96).max);
+        a = bound(a, 1e8, (type(uint256).max - (c - 1)) / b);
+
+        uint256 product = a * b;
+        assertEq(Math.integerMulDivCeil(a, b, c), (product + c - 1) / c);
+    }
+
+    function testIntegerMulDivFloorRevertIfDenominatorIsZero() public {
+        vm.expectRevert(Math.Math__DivisionByZero.selector);
+        Math.integerMulDivFloor(1e18, 1e18, 0);
+    }
+
+    function testIntegerMulDivFloorReturnsZero() public pure {
+        assertEq(Math.integerMulDivFloor(0, 1e18, 1e18), 0);
+        assertEq(Math.integerMulDivFloor(1e18, 0, 1e18), 0);
+        assertEq(Math.integerMulDivFloor(0, 0, 1e18), 0);
+    }
+
+    function testIntegerMulDivFloorRevertIfMultiplicationOverflows() public {
+        uint256 a = type(uint256).max;
+        uint256 b = 2;
+
+        vm.expectRevert(Math.Math__MathOverflow.selector);
+        Math.integerMulDivFloor(a, b, 1e18);
+    }
+
+    function testIntegerMulDivFloor(uint256 a, uint256 b, uint256 c) public pure {
+        b = bound(b, 1e8, type(uint96).max);
+        a = bound(a, 1e8, type(uint256).max / b);
+        c = bound(c, 1e8, type(uint96).max);
+
+        uint256 product = a * b;
+        assertEq(Math.integerMulDivFloor(a, b, c), product / c);
+    }
 }
