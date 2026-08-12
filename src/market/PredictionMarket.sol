@@ -50,6 +50,7 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
     error PredictionMarket__IntialLiquidityMustBeMoreThanZero();
     error PredictionMarket__LiquidityDeadlineMustBeMoreThanCurrTimestamp();
     error PredictionMarket__ResolveTimeMustBeMoreThanLiquidityDeadline();
+    error PredictionMarket__WrongQuestionId();
 
     using ConditionalTokensOperator for address;
     using Pricing for uint256;
@@ -66,9 +67,6 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
 
     /// @dev Current market state.
     MarketState state = MarketState.PENDING;
-
-    /// @dev Position ID of the winning outcome after market resolution.
-    uint256 winningTokenId;
 
     /// @dev Oracle responsible for resolving the market.
     address internal immutable oracle;
@@ -274,10 +272,17 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
      *      collateral to this contract, which then forwards it to the caller.
      */
     function redeem() external onlyResolved {
-        uint256 amount = conditionalToken.balanceOf(msg.sender, winningTokenId);
-        if (amount == 0) revert PredictionMarket__NothingToRedeem();
+        uint256 yesAmount = conditionalToken.balanceOf(msg.sender, yesTokenId);
+        uint256 noAmount = conditionalToken.balanceOf(msg.sender, noTokenId);
+        if (yesAmount == 0 && noAmount == 0) revert PredictionMarket__NothingToRedeem();
 
-        conditionalToken.transferPositionFrom(msg.sender, address(this), winningTokenId, amount);
+        if (yesAmount > 0) {
+            conditionalToken.transferPositionFrom(msg.sender, address(this), yesTokenId, yesAmount);
+        }
+
+        if (noAmount > 0) {
+            conditionalToken.transferPositionFrom(msg.sender, address(this), noTokenId, noAmount);
+        }
 
         uint256 balanceBefore = IERC20(collateral).balanceOf(address(this));
         conditionalToken.redeemPositions(collateral, conditionId);
@@ -405,11 +410,11 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
      * @param yesWins True if the YES outcome wins, false if NO wins.
      * @dev Only callable by the oracle with the RESOLUTION_ROLE.
      */
-    function resolveMarket(bool yesWins) external onlyRole(RESOLUTION_ROLE) {
+    function resolveMarket(bytes32 resovingQuestionId, DataTypes.YesWins yesWins) external onlyRole(RESOLUTION_ROLE) {
+        if (resovingQuestionId != questionId) revert PredictionMarket__WrongQuestionId();
         _canMarketResolve();
 
         conditionalToken.reportPayouts(questionId, yesWins);
-        winningTokenId = yesWins ? yesTokenId : noTokenId;
         state = MarketState.RESOLVED;
         emit MarketStateChanged(MarketState.RESOLVED);
     }

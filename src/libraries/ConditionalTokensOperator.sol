@@ -2,6 +2,7 @@
 pragma solidity 0.8.35;
 
 import {IConditionalTokens} from "../interfaces/IConditionalTokens.sol";
+import {DataTypes} from "../types/DataTypes.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 
@@ -71,12 +72,15 @@ library ConditionalTokensOperator {
      * @param questionId The question identifier.
      * @param yesWins True if the YES outcome wins, false if NO wins.
      */
-    function reportPayouts(address conditionalTokens, bytes32 questionId, bool yesWins) internal {
+    function reportPayouts(address conditionalTokens, bytes32 questionId, DataTypes.YesWins yesWins) internal {
         uint256[] memory payouts = new uint256[](2);
 
-        if (yesWins) {
+        if (yesWins == DataTypes.YesWins.TRUE) {
             payouts[0] = 1;
+        } else if (yesWins == DataTypes.YesWins.FALSE) {
+            payouts[1] = 1;
         } else {
+            payouts[0] = 1;
             payouts[1] = 1;
         }
 

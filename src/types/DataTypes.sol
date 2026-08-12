@@ -7,6 +7,12 @@ pragma solidity 0.8.35;
  * @notice Collection data types used throughout the prediction market.
  */
 library DataTypes {
+    enum YesWins {
+        TRUE,
+        FALSE,
+        UNRESOLVED
+    }
+
     struct MarketInitParams {
         address oracle;
         address collateral;
@@ -18,5 +24,21 @@ library DataTypes {
         uint256 resolveTime;
         uint256 liquidityDeadline;
         uint256 initialLiquidityTarget;
+    }
+
+    struct MarketData {
+        address market;
+        address priceFeed;
+        int256 strike;
+        uint256 resolveTime;
+        uint256 maxSettlementDelay;
+    }
+
+    struct ResolutionData {
+        bool resolved;
+        YesWins yesWins;
+        uint80 settlementRoundId;
+        int256 settlementPrice;
+        uint256 settlementTimestamp;
     }
 }
