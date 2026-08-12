@@ -5,16 +5,14 @@ import {IConditionalTokens} from "./../interfaces/IConditionalTokens.sol";
 import {DataTypes} from "./../types/DataTypes.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-
-interface IPredictionMarket {
-    function resolveMarket(bytes32 questionId, DataTypes.YesWins yesWins) external;
-}
+import {IBinaryOracle} from "./../interfaces/IBinaryOracle.sol";
+import {IPredictionMarket} from "./../interfaces/IPredictionMarket.sol";
 
 /**
  * @title BinaryOracle
  * @notice Resolves a binary Conditional Tokens condition from a Chainlink price feed.
  */
-contract BinaryOracle is Ownable {
+contract BinaryOracle is Ownable, IBinaryOracle {
     error BinaryOracle__ZeroAddress();
     error BinaryOracle__InvalidQuestionId();
     error BinaryOracle__InvalidExpiry();

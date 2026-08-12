@@ -5,6 +5,7 @@ import {FeeLogic} from "./../base/FeeLogic.sol";
 import {ERC1155TokenReceiver} from "./../base/ERC1155Receiver.sol";
 import {Pricing} from "./../libraries/Pricing.sol";
 import {ConditionalTokensOperator} from "./../libraries/ConditionalTokensOperator.sol";
+import {IPredictionMarket} from "./../interfaces/IPredictionMarket.sol";
 import {Math} from "./../libraries/Math.sol";
 import {ILPToken} from "./../interfaces/ILPToken.sol";
 import {IConditionalTokens} from "./../interfaces/IConditionalTokens.sol";
@@ -27,7 +28,7 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
  *         is split into YES/NO positions based on current pool proportions if the market is already open.
  * @dev Liquidity providers receive LP shares representing their share of the pool.
  */
-contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessControl {
+contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessControl, IPredictionMarket {
     error PredictionMarket__NeedMoreThanZero();
     error PredictionMarket__InsufficientLiquidity();
     error PredictionMarket__IsNotPending();
