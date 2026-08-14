@@ -14,13 +14,7 @@ library DataTypes {
     }
 
     struct MarketInitParams {
-        address oracle;
-        address collateral;
-        address conditionalToken;
-        address lpToken;
-
         bytes32 questionId;
-
         uint256 resolveTime;
         uint256 liquidityDeadline;
         uint256 initialLiquidityTarget;

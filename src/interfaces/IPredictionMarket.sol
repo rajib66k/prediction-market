@@ -4,6 +4,8 @@ pragma solidity 0.8.35;
 import {DataTypes} from "./../types/DataTypes.sol";
 
 interface IPredictionMarket {
+    function initialize(DataTypes.MarketInitParams calldata params, address lpTokenAddress) external;
+
     function updateFeeRate(uint256 newRate) external;
 
     function buyYes(uint256 collateralAmount, uint256 minOutcomeTokens) external;

@@ -5,18 +5,57 @@ import {ILPToken} from "./../interfaces/ILPToken.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 
 /**
  * @title LPToken
  * @author Rajib Kumar Pradhan
  * @notice Token representing a user's supplied liquidity position.
  */
-contract LPToken is ILPToken, ERC20, Ownable {
+contract LPToken is ILPToken, ERC20, Ownable, Initializable {
     error LPToken__NotZeroAddress();
     error LPToken__MustBeMoreThanZero();
     error LPToken__OperationNotSupported();
 
-    constructor(string memory tokenName, string memory symbol) Ownable(msg.sender) ERC20(tokenName, symbol) {}
+    string internal tokenName;
+    string internal tokenSymbol;
+
+    /**
+     * @notice Constructor for the LPToken contract.
+     * @dev The constructor disables initializers to prevent the
+     *      implementation contract from being initialized.
+     */
+    constructor() Ownable(msg.sender) ERC20("PredictionMarketLP", "PMLP") {
+        _disableInitializers();
+    }
+
+    /**
+     * @notice Initializes the LP token with the market address as the owner.
+     * @param market The address of the market contract.
+     * @param newName The name of the LP token.
+     * @param newSymbol The symbol of the LP token.
+     * @dev This function can only be called once, and only by the market contract.
+     */
+    function initialize(address market, string calldata newName, string calldata newSymbol) external initializer {
+        if (market == address(0)) revert LPToken__NotZeroAddress();
+        tokenName = newName;
+        tokenSymbol = newSymbol;
+        _transferOwnership(market);
+    }
+
+    /**
+     * @notice Returns the name of the LP token.
+     */
+    function name() public view override returns (string memory) {
+        return tokenName;
+    }
+
+    /**
+     * @notice Returns the symbol of the LP token.
+     */
+    function symbol() public view override returns (string memory) {
+        return tokenSymbol;
+    }
 
     /**
      * @notice Mints LP tokens to a user.

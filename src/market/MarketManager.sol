@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.35;
 
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {DataTypes} from "./../types/DataTypes.sol";
 import {IPredictionMarket} from "./../interfaces/IPredictionMarket.sol";
 import {IBinaryOracle} from "./../interfaces/IBinaryOracle.sol";
+import {ILPToken} from "./../interfaces/ILPToken.sol";
 
 /**
  * @title MarketManager
@@ -17,29 +19,63 @@ contract MarketManager is Ownable {
     error MarketManager__InvalidAddress();
     error MarketManager__MarketNotFound();
 
+    using Clones for address;
+
+    /// @notice Address of the market implementation used for cloning new markets.
+    address public immutable marketImplementation;
+
+    /// @notice Address of the LP token implementation used for cloning new LP tokens.
+    address public immutable lpTokenImplementation;
+
+    /// @notice Address of the oracle used for market resolution.
+    address public immutable oracle;
+
     /// @notice Canonical market address for each question.
     mapping(bytes32 => address) internal sMarkets;
 
     /// @notice Emitted when a market is registered.
-    event MarketCreated(address indexed market, bytes32 indexed questionId);
+    event MarketCreated(address indexed market, address lpToken, bytes32 questionId);
 
-    constructor() Ownable(msg.sender) {}
+    constructor(address marketAddress, address lpTokenAddress, address oracleAddress) Ownable(msg.sender) {
+        if (marketAddress == address(0) || lpTokenAddress == address(0) || oracleAddress == address(0)) {
+            revert MarketManager__InvalidAddress();
+        }
+
+        marketImplementation = marketAddress;
+        lpTokenImplementation = lpTokenAddress;
+        oracle = oracleAddress;
+    }
 
     /**
-     * @notice Registers an already-deployed prediction market.
-     * @dev The deployment script deploys PredictionMarket and LPToken first,
-     *      then calls this function to make the market official.
-     * @param data MarketData struct containing market parameters.
-     * @param questionId Unique identifier of the prediction-market question.
-     * @param oracle Address of the oracle that will resolve the market.
+     * @notice Deploy and registers new prediction market from existing implementations.
+     * @param params MarketInitParams struct containing market initialization parameters.
+     * @param data MarketData struct containing market data for oracle.
+     * @param lpTokenName Name of the LP token.
+     * @param lpTokenSymbol Symbol of the LP token.
+     * @return market Address of the registered market.
+     * @return lpToken Address of the associated LP token.
+     * @dev This function deploys a new market and LP token using the provided parameters,
+     *      and registers them in the manager.
      */
-    function registerMarket(DataTypes.MarketData memory data, bytes32 questionId, address oracle) external onlyOwner {
-        if (questionId == bytes32(0)) revert MarketManager__InvalidAddress();
-        if (sMarkets[questionId] != address(0)) revert MarketManager__MarketAlreadyExists();
+    function cloneAndRegisterMarket(
+        DataTypes.MarketInitParams calldata params,
+        DataTypes.MarketData calldata data,
+        string calldata lpTokenName,
+        string calldata lpTokenSymbol
+    ) external onlyOwner returns (address market, address lpToken) {
+        DataTypes.MarketData memory newData = data;
 
-        sMarkets[questionId] = data.market;
-        IBinaryOracle(oracle).setUpMarket(data, questionId);
-        emit MarketCreated(data.market, questionId);
+        market = marketImplementation.clone();
+        lpToken = lpTokenImplementation.clone();
+
+        newData.market = market;
+        sMarkets[params.questionId] = market;
+
+        ILPToken(lpToken).initialize(market, lpTokenName, lpTokenSymbol);
+        IPredictionMarket(market).initialize(params, lpToken);
+        IBinaryOracle(oracle).setUpMarket(newData, params.questionId);
+
+        emit MarketCreated(market, lpToken, params.questionId);
     }
 
     /**

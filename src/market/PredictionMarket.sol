@@ -13,6 +13,7 @@ import {DataTypes} from "./../types/DataTypes.sol";
 import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 
 /**
  * @title PredictionMarket
@@ -28,7 +29,7 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
  *         is split into YES/NO positions based on current pool proportions if the market is already open.
  * @dev Liquidity providers receive LP shares representing their share of the pool.
  */
-contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessControl, IPredictionMarket {
+contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessControl, Initializable, IPredictionMarket {
     error PredictionMarket__NeedMoreThanZero();
     error PredictionMarket__InsufficientLiquidity();
     error PredictionMarket__IsNotPending();
@@ -67,7 +68,31 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
     }
 
     /// @dev Current market state.
-    MarketState state = MarketState.PENDING;
+    MarketState internal state = MarketState.PENDING;
+
+    /// @dev ERC20 LP token contract.
+    address internal sLPToken;
+
+    /// @dev Condition identifier in Conditional Tokens.
+    bytes32 internal sConditionId;
+
+    /// @dev Question identifier associated with the condition.
+    bytes32 internal sQuestionId;
+
+    /// @dev Position ID for the YES outcome.
+    uint256 internal sYesTokenId;
+
+    /// @dev Position ID for the NO outcome.
+    uint256 internal sNoTokenId;
+
+    /// @dev Timestamp after which the market can be resolved.
+    uint256 internal sResolveTime;
+
+    /// @dev Deadline for reaching the initial liquidity target.
+    uint256 internal sLiquidityDeadline;
+
+    /// @dev Minimum liquidity required to open the market.
+    uint256 internal sInitialLiquidityTarget;
 
     /// @dev Oracle responsible for resolving the market.
     address internal immutable oracle;
@@ -77,30 +102,6 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
 
     /// @dev Gnosis Conditional Tokens contract.
     address internal immutable conditionalToken;
-
-    /// @dev ERC20 LP token contract.
-    address internal immutable lpToken;
-
-    /// @dev Condition identifier in Conditional Tokens.
-    bytes32 internal immutable conditionId;
-
-    /// @dev Question identifier associated with the condition.
-    bytes32 internal immutable questionId;
-
-    /// @dev Position ID for the YES outcome.
-    uint256 internal immutable yesTokenId;
-
-    /// @dev Position ID for the NO outcome.
-    uint256 internal immutable noTokenId;
-
-    /// @dev Timestamp after which the market can be resolved.
-    uint256 internal immutable resolveTime;
-
-    /// @dev Deadline for reaching the initial liquidity target.
-    uint256 internal immutable liquidityDeadline;
-
-    /// @dev Minimum liquidity required to open the market.
-    uint256 internal immutable initialLiquidityTarget;
 
     /// @dev Role identifier to resolve the market.
     bytes32 internal constant RESOLUTION_ROLE = keccak256("RESOLUTION_ROLE");
@@ -128,56 +129,64 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
     event MarketStateChanged(MarketState marketState);
 
     /// @notice Emitted when user redeem position after resolution.
-    event PositionRedeemed(address winner, uint256 winningAmount);
+    event PositionRedeemed(address user, uint256 amount);
 
     /**
-     * @notice Creates a new prediction market.
-     * @param params Market initialization parameters.
+     * @notice Constructor for the prediction market contract.
+     * @param collateralAddress Address of the ERC20 collateral token.
+     * @param conditionalTokenAddress Address of the Gnosis Conditional Tokens contract.
+     * @param oracleAddress Address of the oracle responsible for resolving the market.
+     * @dev The constructor sets the collateral, conditional tokens, and oracle addresses.
+     *      The constructor disables initializers to prevent the implementation contract from being initialized.
      */
-    constructor(DataTypes.MarketInitParams memory params) Ownable(msg.sender) {
-        if (params.initialLiquidityTarget == 0) revert PredictionMarket__IntialLiquidityMustBeMoreThanZero();
-
-        // forge-lint: disable-next-line(block-timestamp)
-        if (params.liquidityDeadline > block.timestamp) {
-            revert PredictionMarket__LiquidityDeadlineMustBeMoreThanCurrTimestamp();
-        }
-
-        if (params.resolveTime > params.liquidityDeadline) {
-            revert PredictionMarket__ResolveTimeMustBeMoreThanLiquidityDeadline();
-        }
-
-        if (
-            params.conditionalToken == address(0) || params.collateral == address(0) || params.lpToken == address(0)
-                || params.oracle == address(0)
-        ) {
+    constructor(address collateralAddress, address conditionalTokenAddress, address oracleAddress) Ownable(msg.sender) {
+        if (collateralAddress == address(0) || conditionalTokenAddress == address(0) || oracleAddress == address(0)) {
             revert PredictionMarket__InvalidAddress();
         }
 
-        conditionalToken = params.conditionalToken;
-        collateral = params.collateral;
-        lpToken = params.lpToken;
-        oracle = params.oracle;
+        collateral = collateralAddress;
+        conditionalToken = conditionalTokenAddress;
+        oracle = oracleAddress;
 
-        questionId = params.questionId;
+        _disableInitializers();
+    }
 
-        resolveTime = params.resolveTime;
-        liquidityDeadline = params.liquidityDeadline;
-        initialLiquidityTarget = params.initialLiquidityTarget;
+    /**
+     * @notice Initialize prediction market.
+     * @param params Market initialization parameters.
+     */
+    function initialize(DataTypes.MarketInitParams calldata params, address lpTokenAddress) external initializer {
+        _transferOwnership(msg.sender);
 
-        IConditionalTokens(conditionalToken).prepareCondition(address(this), questionId, 2);
-        conditionId = IConditionalTokens(conditionalToken).getConditionId(address(this), questionId, 2);
+        if (params.initialLiquidityTarget == 0) revert PredictionMarket__IntialLiquidityMustBeMoreThanZero();
 
-        yesTokenId = IConditionalTokens(conditionalToken)
-            .getPositionId(
-                IERC20(collateral), IConditionalTokens(conditionalToken).getCollectionId(bytes32(0), conditionId, 1)
-            );
+        // forge-lint: disable-next-line(block-timestamp)
+        if (params.liquidityDeadline < block.timestamp) {
+            revert PredictionMarket__LiquidityDeadlineMustBeMoreThanCurrTimestamp();
+        }
 
-        noTokenId = IConditionalTokens(conditionalToken)
-            .getPositionId(
-                IERC20(collateral), IConditionalTokens(conditionalToken).getCollectionId(bytes32(0), conditionId, 2)
-            );
+        if (params.resolveTime < params.liquidityDeadline) {
+            revert PredictionMarket__ResolveTimeMustBeMoreThanLiquidityDeadline();
+        }
 
-        _grantRole(RESOLUTION_ROLE, params.oracle);
+        sLPToken = lpTokenAddress;
+
+        sQuestionId = params.questionId;
+
+        sResolveTime = params.resolveTime;
+        sLiquidityDeadline = params.liquidityDeadline;
+        sInitialLiquidityTarget = params.initialLiquidityTarget;
+
+        IConditionalTokens ct = IConditionalTokens(conditionalToken);
+
+        ct.prepareCondition(address(this), params.questionId, 2);
+        sConditionId = ct.getConditionId(address(this), params.questionId, 2);
+
+        bytes32 conditionId = sConditionId;
+        sYesTokenId = ct.getPositionId(IERC20(collateral), ct.getCollectionId(bytes32(0), conditionId, 1));
+        sNoTokenId = ct.getPositionId(IERC20(collateral), ct.getCollectionId(bytes32(0), conditionId, 2));
+
+        _grantRole(RESOLUTION_ROLE, oracle);
     }
 
     /// @dev Restricts execution to amounts greater than zero.
@@ -196,7 +205,7 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
     modifier onlyOpen() {
         if (state != MarketState.OPEN) revert PredictionMarket__IsNotOpen();
         // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp >= resolveTime) revert PredictionMarket__TradingWindowIsOver();
+        if (block.timestamp >= sResolveTime) revert PredictionMarket__TradingWindowIsOver();
         _;
     }
 
@@ -273,6 +282,8 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
      *      collateral to this contract, which then forwards it to the caller.
      */
     function redeem() external onlyResolved {
+        uint256 yesTokenId = sYesTokenId;
+        uint256 noTokenId = sNoTokenId;
         uint256 yesAmount = conditionalToken.balanceOf(msg.sender, yesTokenId);
         uint256 noAmount = conditionalToken.balanceOf(msg.sender, noTokenId);
         if (yesAmount == 0 && noAmount == 0) revert PredictionMarket__NothingToRedeem();
@@ -286,7 +297,7 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
         }
 
         uint256 balanceBefore = IERC20(collateral).balanceOf(address(this));
-        conditionalToken.redeemPositions(collateral, conditionId);
+        conditionalToken.redeemPositions(collateral, sConditionId);
         uint256 winningAmount = IERC20(collateral).balanceOf(address(this)) - balanceBefore;
 
         IERC20(collateral).safeTransfer(msg.sender, winningAmount);
@@ -300,15 +311,15 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
      */
     function addInitialLiquidity(uint256 collateralAmount) external onlyPending {
         // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp >= liquidityDeadline) revert PredictionMarket__LiquidityPeriodEnded();
+        if (block.timestamp >= sLiquidityDeadline) revert PredictionMarket__LiquidityPeriodEnded();
 
         _addLiquidity(collateralAmount);
 
-        (uint256 yesReserve, uint256 noReserve) = conditionalToken.getPoolBalances(yesTokenId, noTokenId);
+        (uint256 yesReserve, uint256 noReserve) = conditionalToken.getPoolBalances(sYesTokenId, sNoTokenId);
         uint256 initialLiquidity = yesReserve > noReserve ? yesReserve : noReserve;
 
         // forge-lint: disable-next-line(block-timestamp)
-        if (initialLiquidity >= initialLiquidityTarget) {
+        if (initialLiquidity >= sInitialLiquidityTarget) {
             state = MarketState.OPEN;
             emit MarketStateChanged(MarketState.OPEN);
         }
@@ -327,9 +338,12 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
      * @param sharesToBurn Amount of LP tokens to burn.
      */
     function removeLiquidity(uint256 sharesToBurn) external moreThanZero(sharesToBurn) onlyOpenOrResolved {
+        address lpToken = sLPToken;
         uint256 supply = IERC20(lpToken).totalSupply();
         if (sharesToBurn > supply) revert PredictionMarket__InsufficientLiquidity();
 
+        uint256 yesTokenId = sYesTokenId;
+        uint256 noTokenId = sNoTokenId;
         (uint256 yesReserve, uint256 noReserve) = conditionalToken.getPoolBalances(yesTokenId, noTokenId);
         uint256 yesAmount = sharesToBurn.integerMulDivFloor(yesReserve, supply);
         uint256 noAmount = sharesToBurn.integerMulDivFloor(noReserve, supply);
@@ -346,7 +360,7 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
      * @notice Claims accumulated trading fees.
      */
     function claimFees() external {
-        claimFeesUser(lpToken, collateral);
+        claimFeesUser(sLPToken, collateral);
     }
 
     /**
@@ -355,6 +369,8 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
      * @param amount The amount of tokens to transfer.
      */
     function transferLiquidityToken(address to, uint256 amount) external moreThanZero(amount) {
+        address lpToken = sLPToken;
+
         updatePendingFee(msg.sender, lpToken);
         updatePendingFee(to, lpToken);
 
@@ -369,13 +385,15 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
      * @notice Refunds liquidity after market cancellation.
      */
     function refundLiquidity() external onlyCancelled {
+        address lpToken = sLPToken;
+
         uint256 sharesToBurn = IERC20(lpToken).balanceOf(msg.sender);
         if (sharesToBurn == 0) revert PredictionMarket__NeedMoreThanZero();
 
         uint256 supply = IERC20(lpToken).totalSupply();
         if (supply == 0) revert PredictionMarket__NoLiquidity();
 
-        (uint256 yesReserve, uint256 noReserve) = conditionalToken.getPoolBalances(yesTokenId, noTokenId);
+        (uint256 yesReserve, uint256 noReserve) = conditionalToken.getPoolBalances(sYesTokenId, sNoTokenId);
         uint256 yesAmount = sharesToBurn.integerMulDivFloor(yesReserve, supply);
         uint256 noAmount = sharesToBurn.integerMulDivFloor(noReserve, supply);
 
@@ -384,7 +402,7 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
         uint256 mergeAmount = yesAmount < noAmount ? yesAmount : noAmount;
 
         if (mergeAmount > 0) {
-            conditionalToken.mergePosition(collateral, conditionId, mergeAmount);
+            conditionalToken.mergePosition(collateral, sConditionId, mergeAmount);
         }
         IERC20(collateral).safeTransfer(msg.sender, mergeAmount);
         emit LiquidityRefunded(msg.sender, sharesToBurn, mergeAmount);
@@ -395,12 +413,12 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
      */
     function cancelMarket() external onlyPending {
         // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp < liquidityDeadline) revert PredictionMarket__LiquidityDeadlineIsNotOver();
+        if (block.timestamp < sLiquidityDeadline) revert PredictionMarket__LiquidityDeadlineIsNotOver();
 
-        (uint256 yesReserve, uint256 noReserve) = conditionalToken.getPoolBalances(yesTokenId, noTokenId);
+        (uint256 yesReserve, uint256 noReserve) = conditionalToken.getPoolBalances(sYesTokenId, sNoTokenId);
         uint256 liquidity = yesReserve > noReserve ? yesReserve : noReserve;
 
-        if (liquidity >= initialLiquidityTarget) revert PredictionMarket__LiquidityTargetReached();
+        if (liquidity >= sInitialLiquidityTarget) revert PredictionMarket__LiquidityTargetReached();
 
         state = MarketState.CANCELLED;
         emit MarketStateChanged(MarketState.CANCELLED);
@@ -412,6 +430,8 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
      * @dev Only callable by the oracle with the RESOLUTION_ROLE.
      */
     function resolveMarket(bytes32 resovingQuestionId, DataTypes.YesWins yesWins) external onlyRole(RESOLUTION_ROLE) {
+        bytes32 questionId = sQuestionId;
+
         if (resovingQuestionId != questionId) revert PredictionMarket__WrongQuestionId();
         _canMarketResolve();
 
@@ -430,10 +450,12 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
         internal
         moreThanZero(collateralAmount)
     {
+        uint256 yesTokenId = sYesTokenId;
+        uint256 noTokenId = sNoTokenId;
         (uint256 yesReserve, uint256 noReserve) = conditionalToken.getPoolBalances(yesTokenId, noTokenId);
         uint256 fee = calculateFee(collateralAmount);
         uint256 collateralIn = collateralAmount - fee;
-        uint256 supply = IERC20(lpToken).totalSupply();
+        uint256 supply = IERC20(sLPToken).totalSupply();
         if (supply == 0) revert PredictionMarket__NoLiquidity();
 
         addFee(fee, supply);
@@ -449,7 +471,7 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
 
         IERC20(collateral).safeTransferFrom(msg.sender, address(this), collateralAmount);
         IERC20(collateral).forceApprove(conditionalToken, collateralIn);
-        conditionalToken.splitPosition(collateral, conditionId, collateralIn);
+        conditionalToken.splitPosition(collateral, sConditionId, collateralIn);
         conditionalToken.transferPositionFrom(address(this), msg.sender, isYes ? yesTokenId : noTokenId, amountOut);
         emit Bought(msg.sender, isYes ? yesTokenId : noTokenId, collateralAmount, fee, amountOut);
     }
@@ -464,10 +486,12 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
         internal
         moreThanZero(collateralAmount)
     {
+        uint256 yesTokenId = sYesTokenId;
+        uint256 noTokenId = sNoTokenId;
         (uint256 yesReserve, uint256 noReserve) = conditionalToken.getPoolBalances(yesTokenId, noTokenId);
         uint256 fee = calculateFeeFromNet(collateralAmount);
         uint256 collateralOutPlusFee = collateralAmount + fee;
-        uint256 supply = IERC20(lpToken).totalSupply();
+        uint256 supply = IERC20(sLPToken).totalSupply();
         if (supply == 0) revert PredictionMarket__NoLiquidity();
 
         addFee(fee, supply);
@@ -482,7 +506,7 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
         if (amountIn > maxOutcomeTokens) revert PredictionMarket__MaximumInputExceeded();
 
         conditionalToken.transferPositionFrom(msg.sender, address(this), isYes ? yesTokenId : noTokenId, amountIn);
-        conditionalToken.mergePosition(collateral, conditionId, collateralOutPlusFee);
+        conditionalToken.mergePosition(collateral, sConditionId, collateralOutPlusFee);
         IERC20(collateral).safeTransfer(msg.sender, collateralAmount);
         emit Sold(msg.sender, isYes ? yesTokenId : noTokenId, collateralAmount, fee, amountIn);
     }
@@ -493,6 +517,9 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
      * @param collateralAmount Amount of collateral deposited.
      */
     function _addLiquidity(uint256 collateralAmount) internal moreThanZero(collateralAmount) {
+        address lpToken = sLPToken;
+        uint256 yesTokenId = sYesTokenId;
+        uint256 noTokenId = sNoTokenId;
         uint256 supply = IERC20(lpToken).totalSupply();
 
         uint256 shares;
@@ -511,7 +538,7 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
 
         IERC20(collateral).safeTransferFrom(msg.sender, address(this), collateralAmount);
         IERC20(collateral).forceApprove(conditionalToken, collateralAmount);
-        conditionalToken.splitPosition(collateral, conditionId, collateralAmount);
+        conditionalToken.splitPosition(collateral, sConditionId, collateralAmount);
 
         updatePendingFee(msg.sender, lpToken);
         ILPToken(lpToken).mint(msg.sender, shares);
@@ -536,7 +563,7 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
      */
     function _canMarketResolve() internal view {
         // forge-lint: disable-next-line(block-timestamp)
-        if (state != MarketState.OPEN || block.timestamp < resolveTime) {
+        if (state != MarketState.OPEN || block.timestamp < sResolveTime) {
             revert PredictionMarket__MarketCanNotResolve();
         }
     }
