@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.35;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, console} from "forge-std/Test.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {LPToken} from "../../src/tokens/LPToken.sol";
 
 contract LPTokenTest is Test {
@@ -9,19 +10,44 @@ contract LPTokenTest is Test {
 
     address user = makeAddr("user");
     address user2 = makeAddr("user2");
+    address market = makeAddr("market");
 
     function setUp() public {
-        lpToken = new LPToken("LP Token", "LPT");
+        LPToken implementation = new LPToken();
+
+        address clone = Clones.clone(address(implementation));
+        lpToken = LPToken(clone);
+
+        lpToken.initialize(market, "Prediction Market LP", "PMLP");
     }
 
     ///////////////////////
     // Constructor Tests //
     ///////////////////////
     function testConstructor() public view {
-        assertEq(lpToken.name(), "LP Token");
-        assertEq(lpToken.symbol(), "LPT");
-        assertEq(lpToken.owner(), address(this));
+        console.log(lpToken.name());
+        assertEq(lpToken.name(), "Prediction Market LP");
+        assertEq(lpToken.symbol(), "PMLP");
+        assertEq(lpToken.owner(), market);
         assertEq(lpToken.decimals(), 18);
+    }
+
+    ///////////////////////////
+    // Initialize Tests //
+    ///////////////////////////
+    function testInitializeRevertIfZeroAddress() public {
+        LPToken implementation = new LPToken();
+
+        address clone = Clones.clone(address(implementation));
+        LPToken token = LPToken(clone);
+
+        vm.expectRevert(LPToken.LPToken__NotZeroAddress.selector);
+        token.initialize(address(0), "", "");
+    }
+
+    function testInitializeRevertIfAlreadyInitialized() public {
+        vm.expectRevert();
+        lpToken.initialize(user, "", "");
     }
 
     ///////////////////////////
@@ -30,6 +56,7 @@ contract LPTokenTest is Test {
     function testMint() public {
         uint256 amount = 100 ether;
 
+        vm.prank(market);
         lpToken.mint(user, amount);
 
         assertEq(lpToken.balanceOf(user), amount);
@@ -37,11 +64,13 @@ contract LPTokenTest is Test {
     }
 
     function testMintRevertIfZeroAddress() public {
+        vm.prank(market);
         vm.expectRevert(LPToken.LPToken__NotZeroAddress.selector);
         lpToken.mint(address(0), 100 ether);
     }
 
     function testMintRevertIfZero() public {
+        vm.prank(market);
         vm.expectRevert(LPToken.LPToken__MustBeMoreThanZero.selector);
         lpToken.mint(user, 0);
     }
@@ -55,19 +84,23 @@ contract LPTokenTest is Test {
     function testBurn() public {
         uint256 amount = 100 ether;
 
+        vm.startPrank(market);
         lpToken.mint(user, amount);
         lpToken.burn(user, amount);
+        vm.stopPrank();
 
         assertEq(lpToken.balanceOf(user), 0);
         assertEq(lpToken.totalSupply(), 0);
     }
 
     function testBurnRevertIfZeroAddress() public {
+        vm.prank(market);
         vm.expectRevert(LPToken.LPToken__NotZeroAddress.selector);
         lpToken.burn(address(0), 100 ether);
     }
 
     function testBurnRevertIfZero() public {
+        vm.prank(market);
         vm.expectRevert(LPToken.LPToken__MustBeMoreThanZero.selector);
         lpToken.burn(user, 0);
     }
@@ -79,10 +112,12 @@ contract LPTokenTest is Test {
     }
 
     function testBurnRevertIfInsufficientBalance() public {
+        vm.startPrank(market);
         lpToken.mint(user, 100 ether);
 
         vm.expectRevert();
         lpToken.burn(user, 200 ether);
+        vm.stopPrank();
     }
 
     ///////////////////////////////
@@ -91,8 +126,10 @@ contract LPTokenTest is Test {
     function testTransferOnBehalf() public {
         uint256 amount = 100 ether;
 
+        vm.startPrank(market);
         lpToken.mint(user, amount);
         bool result = lpToken.transferOnBehalf(user, user2, 40 ether);
+        vm.stopPrank();
 
         assertTrue(result);
         assertEq(lpToken.balanceOf(user), 60 ether);
@@ -101,13 +138,16 @@ contract LPTokenTest is Test {
     }
 
     function testTransferOnBehalfRevertIfZero() public {
+        vm.startPrank(market);
         lpToken.mint(user, 100 ether);
 
         vm.expectRevert(LPToken.LPToken__MustBeMoreThanZero.selector);
         lpToken.transferOnBehalf(user, user2, 0);
+        vm.stopPrank();
     }
 
     function testTransferOnBehalfRevertIfNotOwner() public {
+        vm.prank(market);
         lpToken.mint(user, 100 ether);
 
         vm.prank(user);
@@ -116,20 +156,25 @@ contract LPTokenTest is Test {
     }
 
     function testTransferOnBehalfRevertIfInsufficientBalance() public {
+        vm.startPrank(market);
         lpToken.mint(user, 100 ether);
 
         vm.expectRevert();
         lpToken.transferOnBehalf(user, user2, 200 ether);
+        vm.stopPrank();
     }
 
     function testTransferOnBehalfToZeroAddressRevert() public {
+        vm.startPrank(market);
         lpToken.mint(user, 100 ether);
 
         vm.expectRevert();
         lpToken.transferOnBehalf(user, address(0), 100 ether);
+        vm.stopPrank();
     }
 
     function testTransferOnBehalfFromZeroAddressRevert() public {
+        vm.prank(market);
         vm.expectRevert();
         lpToken.transferOnBehalf(address(0), user, 100 ether);
     }
@@ -142,14 +187,17 @@ contract LPTokenTest is Test {
     }
 
     function testBalanceOf() public {
+        vm.prank(market);
         lpToken.mint(user, 100 ether);
 
         assertEq(lpToken.balanceOf(user), 100 ether);
     }
 
     function testTotalSupply() public {
+        vm.startPrank(market);
         lpToken.mint(user, 100 ether);
         lpToken.mint(user2, 200 ether);
+        vm.stopPrank();
 
         assertEq(lpToken.totalSupply(), 300 ether);
     }
@@ -190,6 +238,7 @@ contract LPTokenTest is Test {
     // Full Flow Test //
     ////////////////////
     function testFullFlow() public {
+        vm.startPrank(market);
         lpToken.mint(user, 1_000 ether);
 
         bool result = lpToken.transferOnBehalf(user, user2, 300 ether);
@@ -200,6 +249,7 @@ contract LPTokenTest is Test {
         assertEq(lpToken.totalSupply(), 1_000 ether);
 
         lpToken.burn(user2, 100 ether);
+        vm.stopPrank();
 
         assertEq(lpToken.balanceOf(user), 700 ether);
         assertEq(lpToken.balanceOf(user2), 200 ether);
