@@ -144,4 +144,12 @@ contract BinaryOracle is Ownable, IBinaryOracle {
     function strikeWithDecimals(bytes32 questionId) external view returns (int256) {
         return sMarketData[questionId].strike;
     }
+
+    function getMarketData(bytes32 questionId) external view returns (DataTypes.MarketData memory) {
+        return sMarketData[questionId];
+    }
+
+    function getResolutionData(bytes32 questionId) external view returns (DataTypes.ResolutionData memory) {
+        return sResolutionData[questionId];
+    }
 }

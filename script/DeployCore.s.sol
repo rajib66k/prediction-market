@@ -16,11 +16,12 @@ contract DeployCore is Script {
             MarketManager manager,
             BinaryOracle oracle,
             PredictionMarket market,
-            LPToken lpToken
+            LPToken lpToken,
+            HelperConfig.NetworkConfig memory netConfig
         )
     {
         HelperConfig config = new HelperConfig();
-        HelperConfig.NetworkConfig memory netConfig = config.getNetworkConfig();
+        netConfig = config.getNetworkConfig();
 
         vm.startBroadcast(netConfig.deployerKey);
         conditionalTokens = vm.deployCode("artifacts/ConditionalTokens.json");
