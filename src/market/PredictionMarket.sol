@@ -567,4 +567,8 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
             revert PredictionMarket__MarketCanNotResolve();
         }
     }
+
+    function getCurrentFee() external view returns (uint256) {
+        return feeRate;
+    }
 }

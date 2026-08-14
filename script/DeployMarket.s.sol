@@ -34,7 +34,7 @@ contract DeployMarket is Script {
 
         vm.startBroadcast(netConfig.deployerKey);
         (market, lpToken) = MarketManager(manager)
-            .cloneAndRegisterMarket(params, data, marketConfig.lpTokenName, marketConfig.lpTokenName);
+            .cloneAndRegisterMarket(params, data, marketConfig.lpTokenName, marketConfig.lpTokenSymbol);
         vm.stopBroadcast();
 
         _saveMarket(market, lpToken);

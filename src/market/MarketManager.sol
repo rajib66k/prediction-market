@@ -63,19 +63,22 @@ contract MarketManager is Ownable {
         string calldata lpTokenName,
         string calldata lpTokenSymbol
     ) external onlyOwner returns (address market, address lpToken) {
+        bytes32 questionId = params.questionId;
+        if (sMarkets[questionId] != address(0)) revert MarketManager__MarketAlreadyExists();
+
         DataTypes.MarketData memory newData = data;
 
         market = marketImplementation.clone();
         lpToken = lpTokenImplementation.clone();
 
         newData.market = market;
-        sMarkets[params.questionId] = market;
+        sMarkets[questionId] = market;
 
         ILPToken(lpToken).initialize(market, lpTokenName, lpTokenSymbol);
         IPredictionMarket(market).initialize(params, lpToken);
-        IBinaryOracle(oracle).setUpMarket(newData, params.questionId);
+        IBinaryOracle(oracle).setUpMarket(newData, questionId);
 
-        emit MarketCreated(market, lpToken, params.questionId);
+        emit MarketCreated(market, lpToken, questionId);
     }
 
     /**
@@ -97,5 +100,21 @@ contract MarketManager is Ownable {
      */
     function isRegisteredMarket(bytes32 questionId) external view returns (bool) {
         return sMarkets[questionId] != address(0);
+    }
+
+    function getMarket(bytes32 questionId) external view returns (address) {
+        return sMarkets[questionId];
+    }
+
+    function getMarketImplementation() external view returns (address) {
+        return marketImplementation;
+    }
+
+    function getLPTokenImplementation() external view returns (address) {
+        return lpTokenImplementation;
+    }
+
+    function getOracle() external view returns (address) {
+        return oracle;
     }
 }
