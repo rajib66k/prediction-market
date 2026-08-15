@@ -45,7 +45,7 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
     error PredictionMarket__MarketCanNotResolve();
     error PredictionMarket__IsNotResolved();
     error PredictionMarket__NothingToRedeem();
-    error PredictionMarket__IsOpenOrResolved();
+    error PredictionMarket__IsNotOpenOrResolved();
     error PredictionMarket__OnlyLpToken();
     error PredictionMarket__TransferFailed();
     error PredictionMarket__InvalidAddress();
@@ -224,7 +224,7 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
     /// @dev Restricts execution to the open or resolved state.
     modifier onlyOpenOrResolved() {
         if (state == MarketState.PENDING || state == MarketState.CANCELLED) {
-            revert PredictionMarket__IsOpenOrResolved();
+            revert PredictionMarket__IsNotOpenOrResolved();
         }
         _;
     }
@@ -387,11 +387,11 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
     function refundLiquidity() external onlyCancelled {
         address lpToken = sLPToken;
 
-        uint256 sharesToBurn = IERC20(lpToken).balanceOf(msg.sender);
-        if (sharesToBurn == 0) revert PredictionMarket__NeedMoreThanZero();
-
         uint256 supply = IERC20(lpToken).totalSupply();
         if (supply == 0) revert PredictionMarket__NoLiquidity();
+
+        uint256 sharesToBurn = IERC20(lpToken).balanceOf(msg.sender);
+        if (sharesToBurn == 0) revert PredictionMarket__NeedMoreThanZero();
 
         (uint256 yesReserve, uint256 noReserve) = conditionalToken.getPoolBalances(sYesTokenId, sNoTokenId);
         uint256 yesAmount = sharesToBurn.integerMulDivFloor(yesReserve, supply);
@@ -570,5 +570,45 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
 
     function getCurrentFee() external view returns (uint256) {
         return feeRate;
+    }
+
+    function getFeeIndex() external view returns (uint256) {
+        return feeIndex;
+    }
+
+    function getUserFeeDebt(address user) external view returns (uint256) {
+        return feeDebt[user];
+    }
+
+    function getClaimableFee(address user) external view returns (uint256) {
+        return pendingFees[user];
+    }
+
+    function getMarketState() external view returns (MarketState) {
+        return state;
+    }
+
+    function getCollateralToken() external view returns (address) {
+        return collateral;
+    }
+
+    function getConditionalToken() external view returns (address) {
+        return conditionalToken;
+    }
+
+    function getOracle() external view returns (address) {
+        return oracle;
+    }
+
+    function getLPToken() external view returns (address) {
+        return sLPToken;
+    }
+
+    function getMarketData() external view returns (bytes32, uint256, uint256, uint256) {
+        return (sQuestionId, sResolveTime, sLiquidityDeadline, sInitialLiquidityTarget);
+    }
+
+    function getConditionAndTokenIds() external view returns (bytes32, uint256, uint256) {
+        return (sConditionId, sYesTokenId, sNoTokenId);
     }
 }
