@@ -169,6 +169,8 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
             revert PredictionMarket__ResolveTimeMustBeMoreThanLiquidityDeadline();
         }
 
+        feeRate = 1e16;
+
         sLPToken = lpTokenAddress;
 
         sQuestionId = params.questionId;
@@ -566,6 +568,38 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
         if (state != MarketState.OPEN || block.timestamp < sResolveTime) {
             revert PredictionMarket__MarketCanNotResolve();
         }
+    }
+
+    function getBuyYesQuote(uint256 collateralAmount) external view returns (uint256) {
+        (uint256 yesReserve, uint256 noReserve) = conditionalToken.getPoolBalances(sYesTokenId, sNoTokenId);
+        uint256 fee = calculateFee(collateralAmount);
+        uint256 collateralIn = collateralAmount - fee;
+
+        return yesReserve.buyAmount(noReserve, collateralIn);
+    }
+
+    function getBuyNoQuote(uint256 collateralAmount) external view returns (uint256) {
+        (uint256 yesReserve, uint256 noReserve) = conditionalToken.getPoolBalances(sYesTokenId, sNoTokenId);
+        uint256 fee = calculateFee(collateralAmount);
+        uint256 collateralIn = collateralAmount - fee;
+
+        return noReserve.buyAmount(yesReserve, collateralIn);
+    }
+
+    function getSellYesQuote(uint256 collateralAmount) external view returns (uint256) {
+        (uint256 yesReserve, uint256 noReserve) = conditionalToken.getPoolBalances(sYesTokenId, sNoTokenId);
+        uint256 fee = calculateFeeFromNet(collateralAmount);
+        uint256 collateralOutPlusFee = collateralAmount + fee;
+
+        return yesReserve.sellAmount(noReserve, collateralOutPlusFee);
+    }
+
+    function getSellNoQuote(uint256 collateralAmount) external view returns (uint256) {
+        (uint256 yesReserve, uint256 noReserve) = conditionalToken.getPoolBalances(sYesTokenId, sNoTokenId);
+        uint256 fee = calculateFeeFromNet(collateralAmount);
+        uint256 collateralOutPlusFee = collateralAmount + fee;
+
+        return noReserve.sellAmount(yesReserve, collateralOutPlusFee);
     }
 
     function getCurrentFee() external view returns (uint256) {

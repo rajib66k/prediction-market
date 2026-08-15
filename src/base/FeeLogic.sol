@@ -18,7 +18,7 @@ abstract contract FeeLogic {
     using SafeERC20 for IERC20;
 
     /// @dev The current fee rate in 18-decimal precision.
-    uint256 feeRate = 1e16;
+    uint256 feeRate;
 
     /// @dev The global fee index, used to track accumulated fees for LPs.
     uint256 feeIndex;

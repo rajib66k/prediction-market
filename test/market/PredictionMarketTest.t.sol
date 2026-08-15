@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.35;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, console} from "forge-std/Test.sol";
 import {PredictionMarket} from "../../src/market/PredictionMarket.sol";
 import {MarketManager} from "../../src/market/MarketManager.sol";
 import {LPToken} from "../../src/tokens/LPToken.sol";
@@ -11,14 +11,17 @@ import {DataTypes} from "../../src/types/DataTypes.sol";
 import {HelperConfig} from "../../script/HelperConfig.s.sol";
 import {DeployCore} from "../../script/DeployCore.s.sol";
 import {DeployMarket} from "../../script/DeployMarket.s.sol";
+import {Math} from "../../src/libraries/Math.sol";
 import {ERC20DecimalsMock} from "./../mocks/ERC20DecimalsMock.sol";
 import {ConditionalTokensOperator} from "../../src/libraries/ConditionalTokensOperator.sol";
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 
 contract PredictionMarketTest is Test {
     using ConditionalTokensOperator for address;
+    using Math for uint256;
 
     HelperConfig.NetworkConfig public networkConfig;
     HelperConfig.MarketConfig public marketConfig;
@@ -35,6 +38,7 @@ contract PredictionMarketTest is Test {
     LPToken public lpToken;
 
     address public user = makeAddr("user");
+    address public user2 = makeAddr("user2");
     address public constant ANVIL_ADDRESS = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
 
     event LiquidityAdded(address indexed provider, uint256 collateralAmount, uint256 lpTokensMinted);
@@ -44,6 +48,10 @@ contract PredictionMarketTest is Test {
     event MarketStateChanged(PredictionMarket.MarketState marketState);
 
     event LiquidityRemoved(address indexed provider, uint256 lpTokensBurned, uint256 yesAmount, uint256 noAmount);
+
+    event Bought(
+        address indexed buyer, uint256 indexed tokenId, uint256 collateralAmount, uint256 fee, uint256 amountBrought
+    );
 
     function setUp() public {
         DeployCore deployCore = new DeployCore();
@@ -200,7 +208,7 @@ contract PredictionMarketTest is Test {
     // Add Initial & Add Liquidity Tests //
     ///////////////////////////////////////
     function testAddInitialLiquidityRevertsIfNotPendingOrCurrTimeIsMoreThanDeadlineNotPending(uint256 amount) public {
-        amount = bound(amount, 1e8, type(uint96).max);
+        amount = bound(amount, 1e3, type(uint64).max);
 
         vm.startPrank(user);
         mintAndApprove(user, 1e6);
@@ -221,7 +229,7 @@ contract PredictionMarketTest is Test {
     }
 
     function teatAddInitialLiquidity(uint256 amount) public {
-        amount = bound(amount, 1e8, type(uint96).max);
+        amount = bound(amount, 1e3, type(uint64).max);
 
         vm.startPrank(user);
         mintAndApprove(user, amount);
@@ -255,7 +263,7 @@ contract PredictionMarketTest is Test {
     }
 
     function testAddLiquidityRevertsIfNotOpenOrLpShareIsZero(uint256 amount) public {
-        amount = bound(amount, 1e8, type(uint96).max);
+        amount = bound(amount, 1e3, type(uint64).max);
 
         vm.expectRevert(PredictionMarket.PredictionMarket__IsNotOpen.selector);
         market.addLiquidity(amount);
@@ -269,7 +277,7 @@ contract PredictionMarketTest is Test {
     }
 
     function testAddLiquidity(uint256 amount) public {
-        amount = bound(amount, 1e8, type(uint96).max);
+        amount = bound(amount, 1e3, type(uint64).max);
 
         vm.startPrank(user);
         openMarketWithInitalSupply();
@@ -343,7 +351,7 @@ contract PredictionMarketTest is Test {
     }
 
     function testRefundLiquidity(uint256 amount) public {
-        amount = bound(amount, 1e8, marketConfig.initialLiquidityTarget - 1);
+        amount = bound(amount, 1e3, marketConfig.initialLiquidityTarget - 1);
 
         vm.startPrank(user);
         mintAndApprove(user, amount);
@@ -395,5 +403,183 @@ contract PredictionMarketTest is Test {
         assertEq(userIntialShares - amount, 0);
         assertEq(yesBal, amount);
         assertEq(noBal, amount);
+    }
+
+    ////////////////////////
+    // Buy Yes & No Tests //
+    ////////////////////////
+    function testBuyRevertsIfNotOpenOrZeroAmntOrNoSupplyOrSlippageIsMore() external {
+        vm.expectRevert(PredictionMarket.PredictionMarket__IsNotOpen.selector);
+        market.buyYes(1e6, 1e6);
+        vm.expectRevert(PredictionMarket.PredictionMarket__IsNotOpen.selector);
+        market.buyNo(1e6, 1e6);
+
+        vm.startPrank(user);
+        openMarketWithInitalSupply();
+
+        vm.expectRevert(PredictionMarket.PredictionMarket__NeedMoreThanZero.selector);
+        market.buyYes(0, 1e6);
+
+        vm.expectRevert(PredictionMarket.PredictionMarket__MinimumOutputNotMet.selector);
+        market.buyYes(1e6, 1e7);
+        vm.stopPrank();
+    }
+
+    function testBuyYes(uint256 amount) external {
+        amount = bound(amount, 1e3, type(uint64).max);
+
+        vm.startPrank(user);
+        openMarketWithInitalSupply();
+        mintAndApprove(user, amount);
+        market.addLiquidity(amount);
+        vm.stopPrank();
+
+        (, uint256 yesId, uint256 noId) = market.getConditionAndTokenIds();
+        uint256 quotedAmount = market.getBuyYesQuote(amount);
+        uint256 feeDeducted = amount.mul(1e16);
+
+        vm.startPrank(user2);
+        mintAndApprove(user2, amount);
+        vm.expectEmit(true, true, true, true);
+        emit Bought(user2, yesId, amount, feeDeducted, quotedAmount);
+        market.buyYes(amount, quotedAmount);
+        vm.stopPrank();
+
+        uint256 yesUserBal = address(ct).balanceOf(user2, yesId);
+        uint256 noUserBal = address(ct).balanceOf(user2, noId);
+
+        assertEq(
+            IERC20(networkConfig.asset).balanceOf(address(ct)),
+            (amount * 2) + marketConfig.initialLiquidityTarget - feeDeducted
+        );
+        assertEq(yesUserBal, quotedAmount);
+        assertEq(noUserBal, 0);
+        assertEq(IERC20(networkConfig.asset).balanceOf(address(market)), feeDeducted);
+        assertEq(market.getFeeIndex(), feeDeducted.divFloor(lpToken.totalSupply()));
+    }
+
+    function testBuyNo(uint256 amount) external {
+        amount = bound(amount, 1e3, type(uint64).max);
+
+        vm.startPrank(user);
+        openMarketWithInitalSupply();
+        mintAndApprove(user, amount);
+        market.addLiquidity(amount);
+        vm.stopPrank();
+
+        (, uint256 yesId, uint256 noId) = market.getConditionAndTokenIds();
+        uint256 quotedAmount = market.getBuyNoQuote(amount);
+        uint256 feeDeducted = amount.mul(1e16);
+
+        vm.startPrank(user2);
+        mintAndApprove(user2, amount);
+        vm.expectEmit(true, true, true, true);
+        emit Bought(user2, noId, amount, feeDeducted, quotedAmount);
+        market.buyNo(amount, quotedAmount);
+        vm.stopPrank();
+
+        uint256 yesUserBal = address(ct).balanceOf(user2, yesId);
+        uint256 noUserBal = address(ct).balanceOf(user2, noId);
+
+        assertEq(
+            IERC20(networkConfig.asset).balanceOf(address(ct)),
+            (amount * 2) + marketConfig.initialLiquidityTarget - feeDeducted
+        );
+        assertEq(yesUserBal, 0);
+        assertEq(noUserBal, quotedAmount);
+        assertEq(IERC20(networkConfig.asset).balanceOf(address(market)), feeDeducted);
+        assertEq(market.getFeeIndex(), feeDeducted.divFloor(lpToken.totalSupply()));
+    }
+
+    /////////////////////////
+    // Sell Yes & No Tests //
+    /////////////////////////
+    function testSellRevertsIfNotOpenOrZeroAmntOrNoSupplyOrSlippageIsMore() public {
+        vm.expectRevert(PredictionMarket.PredictionMarket__IsNotOpen.selector);
+        market.sellYes(1e6, 1e6);
+        vm.expectRevert(PredictionMarket.PredictionMarket__IsNotOpen.selector);
+        market.sellNo(1e6, 1e6);
+
+        vm.startPrank(user);
+        openMarketWithInitalSupply();
+
+        vm.expectRevert(PredictionMarket.PredictionMarket__NeedMoreThanZero.selector);
+        market.sellYes(0, 1e6);
+
+        vm.expectRevert(PredictionMarket.PredictionMarket__MaximumInputExceeded.selector);
+        market.sellYes(1e6, 1e6);
+        vm.stopPrank();
+    }
+
+    function testSellYes(uint256 amount, uint256 sellAmount) public {
+        amount = bound(amount, 1e3, type(uint64).max);
+
+        vm.startPrank(user);
+        openMarketWithInitalSupply();
+        mintAndApprove(user, amount);
+        market.addLiquidity(amount);
+        vm.stopPrank();
+
+        (, uint256 yesId,) = market.getConditionAndTokenIds();
+        uint256 buyQuote = market.getBuyYesQuote(amount);
+
+        vm.startPrank(user2);
+        mintAndApprove(user2, amount);
+        market.buyYes(amount, buyQuote);
+
+        uint256 yesBalance = IERC1155(address(ct)).balanceOf(user2, yesId);
+        sellAmount = bound(sellAmount, 1, yesBalance);
+        uint256 yesTokensRequired = market.getSellYesQuote(sellAmount);
+        vm.assume(yesTokensRequired <= yesBalance);
+
+        uint256 collateralBefore = IERC20(networkConfig.asset).balanceOf(user2);
+        uint256 yesBalanceBefore = IERC1155(address(ct)).balanceOf(user2, yesId);
+
+        IERC1155(address(ct)).setApprovalForAll(address(market), true);
+        market.sellYes(sellAmount, yesTokensRequired);
+        vm.stopPrank();
+
+        uint256 collateralAfter = IERC20(networkConfig.asset).balanceOf(user2);
+        uint256 yesBalanceAfter = IERC1155(address(ct)).balanceOf(user2, yesId);
+
+        assertEq(collateralAfter - collateralBefore, sellAmount);
+        assertEq(yesBalanceBefore - yesBalanceAfter, yesTokensRequired);
+        assertEq(yesBalance, buyQuote);
+    }
+
+    function testSellNo(uint256 amount, uint256 sellAmount) public {
+        amount = bound(amount, 1e3, type(uint64).max);
+
+        vm.startPrank(user);
+        openMarketWithInitalSupply();
+        mintAndApprove(user, amount);
+        market.addLiquidity(amount);
+        vm.stopPrank();
+
+        (,, uint256 noId) = market.getConditionAndTokenIds();
+        uint256 buyQuote = market.getBuyNoQuote(amount);
+
+        vm.startPrank(user2);
+        mintAndApprove(user2, amount);
+        market.buyNo(amount, buyQuote);
+
+        uint256 noBalance = IERC1155(address(ct)).balanceOf(user2, noId);
+        sellAmount = bound(sellAmount, 1, noBalance);
+        uint256 noTokensRequired = market.getSellNoQuote(sellAmount);
+        vm.assume(noTokensRequired <= noBalance);
+
+        uint256 collateralBefore = IERC20(networkConfig.asset).balanceOf(user2);
+        uint256 noBalanceBefore = IERC1155(address(ct)).balanceOf(user2, noId);
+
+        IERC1155(address(ct)).setApprovalForAll(address(market), true);
+        market.sellNo(sellAmount, noTokensRequired);
+        vm.stopPrank();
+
+        uint256 collateralAfter = IERC20(networkConfig.asset).balanceOf(user2);
+        uint256 noBalanceAfter = IERC1155(address(ct)).balanceOf(user2, noId);
+
+        assertEq(collateralAfter - collateralBefore, sellAmount);
+        assertEq(noBalanceBefore - noBalanceAfter, noTokensRequired);
+        assertEq(noBalance, buyQuote);
     }
 }
