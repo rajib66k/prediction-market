@@ -18,6 +18,7 @@ import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.s
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
+import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 
 contract PredictionMarketTest is Test {
     using ConditionalTokensOperator for address;
@@ -52,6 +53,8 @@ contract PredictionMarketTest is Test {
     event Bought(
         address indexed buyer, uint256 indexed tokenId, uint256 collateralAmount, uint256 fee, uint256 amountBrought
     );
+
+    event PositionRedeemed(address user, uint256 amount);
 
     function setUp() public {
         DeployCore deployCore = new DeployCore();
@@ -581,5 +584,104 @@ contract PredictionMarketTest is Test {
         assertEq(collateralAfter - collateralBefore, sellAmount);
         assertEq(noBalanceBefore - noBalanceAfter, noTokensRequired);
         assertEq(noBalance, buyQuote);
+    }
+
+    //////////////////////////////////////
+    // Resolve, Transfer & Redeem Tests //
+    //////////////////////////////////////
+    function testResolveRevertsIfNotByResolutionRoleOrWrongQuestionIdOrNotOpenOrResolutionTimeNotReached() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, address(this), keccak256("RESOLUTION_ROLE")
+            )
+        );
+        market.resolveMarket(marketConfig.questionId, DataTypes.YesWins.TRUE);
+
+        vm.prank(address(oracle));
+        vm.expectRevert(PredictionMarket.PredictionMarket__WrongQuestionId.selector);
+        market.resolveMarket(bytes32(0), DataTypes.YesWins.TRUE);
+
+        vm.prank(address(oracle));
+        vm.expectRevert(PredictionMarket.PredictionMarket__MarketCanNotResolve.selector);
+        market.resolveMarket(marketConfig.questionId, DataTypes.YesWins.TRUE);
+
+        vm.startPrank(user);
+        openMarketWithInitalSupply();
+        vm.stopPrank();
+
+        vm.prank(address(oracle));
+        vm.expectRevert(PredictionMarket.PredictionMarket__MarketCanNotResolve.selector);
+        market.resolveMarket(marketConfig.questionId, DataTypes.YesWins.TRUE);
+    }
+
+    function testResolveMarket() public {
+        vm.startPrank(user);
+        openMarketWithInitalSupply();
+        vm.stopPrank();
+
+        vm.warp(marketConfig.resolveTime);
+
+        vm.prank(address(oracle));
+        vm.expectEmit(true, true, true, true);
+        emit MarketStateChanged(PredictionMarket.MarketState.RESOLVED);
+        market.resolveMarket(marketConfig.questionId, DataTypes.YesWins.FALSE);
+
+        assertEq(uint256(market.getMarketState()), uint256(PredictionMarket.MarketState.RESOLVED));
+    }
+
+    function testTransferRevertsIfAmountIsZero() public {
+        vm.expectRevert(PredictionMarket.PredictionMarket__NeedMoreThanZero.selector);
+        market.transferLiquidityToken(address(0), 0);
+    }
+
+    function testTransferLiquidityToken() public {
+        vm.startPrank(user);
+        openMarketWithInitalSupply();
+
+        market.transferLiquidityToken(user2, marketConfig.initialLiquidityTarget);
+        vm.stopPrank();
+
+        assertEq(lpToken.balanceOf(user), 0);
+        assertEq(lpToken.balanceOf(user2), marketConfig.initialLiquidityTarget);
+    }
+
+    function testRedeemRevertsIfMarketNotResolvedOrNothingToRedeem() public {
+        vm.expectRevert(PredictionMarket.PredictionMarket__IsNotResolved.selector);
+        market.redeem();
+
+        vm.startPrank(user);
+        openMarketWithInitalSupply();
+        vm.stopPrank();
+
+        vm.warp(marketConfig.resolveTime);
+
+        vm.prank(address(oracle));
+        market.resolveMarket(marketConfig.questionId, DataTypes.YesWins.FALSE);
+
+        vm.expectRevert(PredictionMarket.PredictionMarket__NothingToRedeem.selector);
+        market.redeem();
+    }
+
+    function testRedeem() public {
+        vm.startPrank(user);
+        openMarketWithInitalSupply();
+        vm.stopPrank();
+
+        vm.warp(marketConfig.resolveTime);
+
+        vm.prank(address(oracle));
+        market.resolveMarket(marketConfig.questionId, DataTypes.YesWins.UNRESOLVED);
+
+        vm.startPrank(user);
+        market.removeLiquidity(marketConfig.initialLiquidityTarget);
+
+        IERC1155(address(ct)).setApprovalForAll(address(market), true);
+        vm.expectEmit(true, true, true, true);
+        emit PositionRedeemed(user, marketConfig.initialLiquidityTarget);
+        market.redeem();
+        vm.stopPrank();
+
+        assertEq(IERC20(networkConfig.asset).balanceOf(address(market)), 0);
+        assertEq(IERC20(networkConfig.asset).balanceOf(user), marketConfig.initialLiquidityTarget);
     }
 }
