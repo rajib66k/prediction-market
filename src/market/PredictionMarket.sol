@@ -46,7 +46,6 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
     error PredictionMarket__IsNotResolved();
     error PredictionMarket__NothingToRedeem();
     error PredictionMarket__IsNotOpenOrResolved();
-    error PredictionMarket__OnlyLpToken();
     error PredictionMarket__TransferFailed();
     error PredictionMarket__InvalidAddress();
     error PredictionMarket__IntialLiquidityMustBeMoreThanZero();
@@ -437,8 +436,8 @@ contract PredictionMarket is FeeLogic, ERC1155TokenReceiver, Ownable, AccessCont
         if (resovingQuestionId != questionId) revert PredictionMarket__WrongQuestionId();
         _canMarketResolve();
 
-        conditionalToken.reportPayouts(questionId, yesWins);
         state = MarketState.RESOLVED;
+        conditionalToken.reportPayouts(questionId, yesWins);
         emit MarketStateChanged(MarketState.RESOLVED);
     }
 

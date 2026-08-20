@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.35;
 
-import {IConditionalTokens} from "./../interfaces/IConditionalTokens.sol";
 import {DataTypes} from "./../types/DataTypes.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
