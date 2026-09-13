@@ -13,6 +13,7 @@ contract HelperConfig is Script {
 
     struct MarketConfig {
         address priceFeed;
+        string question;
         bytes32 questionId;
         int256 strike;
         uint256 resolveTime;
@@ -60,6 +61,7 @@ contract HelperConfig is Script {
 
         marConfig = MarketConfig({
             priceFeed: 0x694AA1769357215DE4FAC081bf1f309aDC325306,
+            question: question,
             questionId: questionId,
             strike: STRIKE,
             resolveTime: RESOLVE_TIME,
@@ -87,6 +89,7 @@ contract HelperConfig is Script {
 
         marConfig = MarketConfig({
             priceFeed: address(wethUsdPriceFeed),
+            question: question,
             questionId: questionId,
             strike: STRIKE,
             resolveTime: RESOLVE_TIME,

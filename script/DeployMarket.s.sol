@@ -18,6 +18,7 @@ contract DeployMarket is Script {
         address manager = vm.parseJsonAddress(coreJson, ".manager");
 
         DataTypes.MarketInitParams memory params = DataTypes.MarketInitParams({
+            question: marketConfig.question,
             questionId: marketConfig.questionId,
             resolveTime: marketConfig.resolveTime,
             liquidityDeadline: marketConfig.liquidityDeadline,

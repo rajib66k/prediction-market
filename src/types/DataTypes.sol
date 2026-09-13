@@ -14,6 +14,7 @@ library DataTypes {
     }
 
     struct MarketInitParams {
+        string question;
         bytes32 questionId;
         uint256 resolveTime;
         uint256 liquidityDeadline;

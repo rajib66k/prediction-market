@@ -111,6 +111,7 @@ contract PredictionMarketTest is Test {
         PredictionMarket implementation = new PredictionMarket(networkConfig.asset, address(ct), address(oracle));
 
         DataTypes.MarketInitParams memory params = DataTypes.MarketInitParams({
+            question: marketConfig.question,
             questionId: marketConfig.questionId,
             resolveTime: marketConfig.resolveTime,
             liquidityDeadline: marketConfig.liquidityDeadline,
@@ -125,6 +126,7 @@ contract PredictionMarketTest is Test {
         public
     {
         DataTypes.MarketInitParams memory params = DataTypes.MarketInitParams({
+            question: marketConfig.question,
             questionId: marketConfig.questionId,
             resolveTime: marketConfig.resolveTime,
             liquidityDeadline: marketConfig.liquidityDeadline,
@@ -155,6 +157,7 @@ contract PredictionMarketTest is Test {
         address previousOwner = PredictionMarket(clone).owner();
 
         DataTypes.MarketInitParams memory params = DataTypes.MarketInitParams({
+            question: marketConfig.question,
             questionId: marketConfig.questionId,
             resolveTime: marketConfig.resolveTime,
             liquidityDeadline: marketConfig.liquidityDeadline,
@@ -195,6 +198,7 @@ contract PredictionMarketTest is Test {
         address clone = Clones.clone(address(marketImpl));
 
         DataTypes.MarketInitParams memory params = DataTypes.MarketInitParams({
+            question: marketConfig.question,
             questionId: marketConfig.questionId,
             resolveTime: marketConfig.resolveTime,
             liquidityDeadline: marketConfig.liquidityDeadline,

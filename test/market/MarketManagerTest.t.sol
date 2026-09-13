@@ -69,6 +69,7 @@ contract MarketManagerTest is Test {
 
     function testCloneAndRegisterMarketRevertsIfNotOwnerOrMarketAlreadyExist() public {
         DataTypes.MarketInitParams memory params = DataTypes.MarketInitParams({
+            question: marketConfig.question,
             questionId: marketConfig.questionId,
             resolveTime: marketConfig.resolveTime,
             liquidityDeadline: marketConfig.liquidityDeadline,
@@ -96,6 +97,7 @@ contract MarketManagerTest is Test {
         bytes32 questionId = keccak256(abi.encode("New Question", marketConfig.resolveTime, block.chainid));
 
         DataTypes.MarketInitParams memory params = DataTypes.MarketInitParams({
+            question: marketConfig.question,
             questionId: questionId,
             resolveTime: marketConfig.resolveTime,
             liquidityDeadline: marketConfig.liquidityDeadline,

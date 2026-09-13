@@ -34,7 +34,9 @@ contract MarketManager is Ownable {
     mapping(bytes32 => address) internal sMarkets;
 
     /// @notice Emitted when a market is registered.
-    event MarketCreated(address indexed market, address lpToken, bytes32 questionId);
+    event MarketCreated(
+        address indexed market, address lpToken, string question, bytes32 questionId, uint256 resolveTime
+    );
 
     constructor(address marketAddress, address lpTokenAddress, address oracleAddress) Ownable(msg.sender) {
         if (marketAddress == address(0) || lpTokenAddress == address(0) || oracleAddress == address(0)) {
@@ -78,7 +80,7 @@ contract MarketManager is Ownable {
         IPredictionMarket(market).initialize(params, lpToken);
         IBinaryOracle(oracle).setUpMarket(newData, questionId);
 
-        emit MarketCreated(market, lpToken, questionId);
+        emit MarketCreated(market, lpToken, params.question, questionId, params.resolveTime);
     }
 
     /**
